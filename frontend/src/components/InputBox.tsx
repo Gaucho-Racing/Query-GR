@@ -23,7 +23,7 @@ const InputBox = ({
   };
 
   return (
-    <div className="flex items-center space-x-2 p-4 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
+    <div className="flex rounded-2xl items-center space-x-2 p-4 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 ">
       <input
         type="text"
         value={message}
@@ -31,12 +31,12 @@ const InputBox = ({
         onKeyPress={handleKeyPress}
         placeholder={placeholder}
         disabled={disabled}
-        className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white text-black placeholder-gray-500 dark:placeholder-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
+        className="flex-1 text-lg rounded-xl px-4 py-2 border border-gray-300 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white text-black placeholder-gray-500 dark:placeholder-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
       />
       <button
         onClick={handleSend}
         disabled={disabled || !message.trim()}
-        className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+        className=" rounded-xl px-4 text-lg py-2 bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
       >
         Send
       </button>

@@ -7,10 +7,10 @@
   flex-direction: column;
 }
 
-/* Smooth transitions for theme changes */
-* {
+Smooth transitions for theme changes
+/* * {
   transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-}
+} */
 
 /* Custom scrollbar for dark mode */
 .dark ::-webkit-scrollbar {

@@ -52,18 +52,21 @@ The frontend will be available at `http://localhost:5173`
 ### Backend Setup
 
 1. **Install dependencies:**
+
 ```bash
 cd backend
 pip install -r requirements-minimal.txt
 ```
 
 2. **Configure environment:**
+
 ```bash
 cp env.example .env
 # Edit .env and add your GEMINI API key (and optional settings below)
 ```
 
 3. **Run the server:**
+
 ```bash
 uvicorn main:app --reload
 ```
@@ -95,14 +98,16 @@ The system includes comprehensive error logging:
 ## Example Usage
 
 ### Valid Queries (Vehicle Data)
+
 - "Give me the averages of the mobile speed"
 - "What's the maximum acceleration during the trip?"
-- "Show me the fuel consumption data"
-- "Calculate the average RPM for this session"
+- "What was the maximum inverter temperature recorded?"
+- "What is the average temperature of all the accumulator cells?"
 
 **Response:** "The average mobile speed for trip 4 is 45.6 km/h."
 
 ### Invalid Queries (Non-Vehicle Data)
+
 - "Tell me a joke"
 - "What's the weather like?"
 - "How do I cook pasta?"
@@ -112,9 +117,11 @@ The system includes comprehensive error logging:
 ## API Endpoints
 
 ### POST `/query`
+
 Handles user messages and processes vehicle data queries.
 
 **Request:**
+
 ```json
 {
   "message": "Give me the averages of the mobile speed"
@@ -122,6 +129,7 @@ Handles user messages and processes vehicle data queries.
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -133,9 +141,11 @@ Handles user messages and processes vehicle data queries.
 ```
 
 ### POST `/log`
+
 Receives and stores frontend error reports.
 
 **Request:**
+
 ```json
 {
   "error": "Network request failed",
@@ -146,6 +156,7 @@ Receives and stores frontend error reports.
 ```
 
 ### GET `/health`
+
 Health check endpoint for monitoring.
 
 ## Development
@@ -215,6 +226,7 @@ Results are returned as a single line of text to the frontend; the executed scri
 ### API Configuration
 
 The vehicle data API is configured with:
+
 - **URL**: `https://mapache.gauchoracing.com/api/query/signals`
 - **Vehicle ID**: `gr24-main`
 - **Trip ID**: `4`
@@ -227,4 +239,3 @@ The vehicle data API is configured with:
 3. Make your changes
 4. Test thoroughly
 5. Submit a pull request
-

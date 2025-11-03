@@ -69,6 +69,12 @@ SCRIPT_TIMEOUT = int(os.getenv("SCRIPT_TIMEOUT", "20"))
 SCRIPT_CACHE_TTL_SECONDS = 3600  # 1 hour
 _script_cache: Dict[str, Dict[str, Any]] = {}
 
+SIGNALS = ""
+df = pd.read_csv("signals.csv")
+for index, row in df.iterrows():
+    SIGNALS += row["name"] + ", "
+logger.info("-- -- -- -- json dumps: " + json.dumps(SIGNALS))
+
 async def call_gemini(prompt: str) -> str:
     """Call Gemini API to generate content"""
     if not GEMINI_API_KEY:
@@ -188,14 +194,15 @@ async def generate_pandas_script(query: str) -> str:
 You are a data analysis expert. Generate a Python script that:
 
 1. Infers the relevant signal names from the user request (e.g., mobile_speed, acu_cellX_temp, acu_cellY_voltage, etc.).
-   Build the signals parameter as a comma-separated list (no spaces).
-   Use the provided helper `build_url(signals: list[str])` to construct the URL.
+   Build the signals parameter as a string list.
+   These are the only allowed signals (separated by ", "): {SIGNALS}
+   - Use the user query to find the most relevant signals to query. ONLY use these signals when fetching the API
+   Use the provided helper `build_url(signals: list[str])` to construct the URL. Do not use data from any other API. Do not create mock data. Do not make up data without fetching the API. If you do not use the build_url and http_get helpers then do return any data.
    Then use `http_get(url)` to fetch the JSON.
-2. Loads the JSON into a pandas DataFrame (extract the relevant arrays/fields as needed)
-3. Computes the metric requested by the user query below
-4. Prints a clear, single-line result string for the user
+2. Computes the metric requested by the user query below
+3. Prints a clear, single-line result string for the user
 
-User Query: "{json.dumps(query)}"
+User Query: "{json.dumps(query)}" (This variable is not defined, you have to define it yourself with this string value)
 
 Support advanced queries like:
 - "top 10 mobile_speed values"
@@ -210,6 +217,7 @@ Requirements:
 - Use the provided helper: http_get(url) instead of calling httpx directly (this logs the URL and returns a Response for .json()).
 - Make the HTTP GET within the script to fetch the JSON data.
 - Do not use any external variables; construct the URL with params inside the script.
+- The only defined global variables/functions are: pd json httpx print set_result http_get build_url, do not call any other undefined variables/functions
 - Parse the JSON robustly. Possible shapes include:
   * {{"signals": {{"mobile_speed": [...]}}}}
   * {{"data": {{"mobile_speed": [...]}}}}
@@ -268,6 +276,10 @@ async def execute_pandas_script(script: str) -> tuple[str, Dict[str, Any]]:
             )
             logger.info(f"AI script build_url: {base}")
             return base
+        
+        # def get_possible_signals():
+        #     df = pd.read_csv("signals.csv")
+        #     return df
 
         safe_globals = {
             'pd': pd,
@@ -277,6 +289,7 @@ async def execute_pandas_script(script: str) -> tuple[str, Dict[str, Any]]:
             'set_result': set_result,
             'http_get': http_get,
             'build_url': build_url,
+            # 'get_possible_signals': get_possible_signals
         }
         
         # Capture the output
