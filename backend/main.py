@@ -52,7 +52,7 @@ GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googl
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 GEMINI_MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "2"))
 GEMINI_RETRY_BACKOFF = float(os.getenv("GEMINI_RETRY_BACKOFF", "1.0"))
-GEMINI_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "60"))
+GEMINI_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "300"))
 
 # Debug diagnostics toggle
 DEBUG_ANALYSIS = os.getenv("DEBUG_ANALYSIS", "false").lower() == "true"
@@ -85,12 +85,13 @@ async def call_gemini(prompt: str) -> str:
         ]
     }
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=300.0) as client:
         attempt = 0
         while True:
             try:
                 logger.info(f"Gemini request model={GEMINI_MODEL} prompt_len={len(prompt)} attempt={attempt}")
                 response = await client.post(url, params=params, json=payload, timeout=GEMINI_TIMEOUT)
+                logger.info(response)
                 if response.status_code == 429:
                     retry_after = response.headers.get("Retry-After", "60")
                     logger.warning(f"Gemini rate limited. Retry-After: {retry_after}")
@@ -194,7 +195,7 @@ You are a data analysis expert. Generate a Python script that:
 3. Computes the metric requested by the user query below
 4. Prints a clear, single-line result string for the user
 
-User Query: "{query}"
+User Query: "{json.dumps(query)}"
 
 Support advanced queries like:
 - "top 10 mobile_speed values"
@@ -222,10 +223,12 @@ Requirements:
 - Do not include explanations or markdown. Output ONLY executable Python code.
 """
 
-    script = await call_gemini(prompt)
-    if DEBUG_ANALYSIS:
-        logger.info(f"Generated script length={len(script)} for query='{query[:60]}'...")
-    return script
+    return prompt
+
+    # script = await call_gemini(prompt)
+    # if DEBUG_ANALYSIS:
+    #     logger.info(f"Generated script length={len(script)} for query='{query[:60]}'...")
+    # return script
 
 async def execute_pandas_script(script: str) -> tuple[str, Dict[str, Any]]:
     """Execute the generated Pandas script safely"""
@@ -393,7 +396,10 @@ async def handle_query(request: ChatRequest):
             if cached and (now - cached["ts"]) < SCRIPT_CACHE_TTL_SECONDS:
                 pandas_script = cached["script"]
             else:
-                pandas_script = await generate_pandas_script(message)
+                prompt = await generate_pandas_script(message)
+                pandas_script = await call_gemini(prompt)
+                if DEBUG_ANALYSIS:
+                    logger.info(f"Generated script length={len(pandas_script)} for query='{message[:60]}'...")
                 _script_cache[normalized] = {"script": pandas_script, "ts": now}
         except HTTPException as e:
             # Propagate rate limit or other HTTP errors with headers
