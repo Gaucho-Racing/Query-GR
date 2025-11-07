@@ -73,6 +73,12 @@ cp env.example .env
 uvicorn main:app --reload
 ```
 
+_^ If this command does not work, you may try the below:_
+
+```bash
+python3 -m uvicorn main:app --reload
+```
+
 The backend API will be available at `http://localhost:8000`
 
 ## Workflow
