@@ -12,7 +12,6 @@ import os
 import mysql.connector  # requires mysql-connector-python
 from dotenv import load_dotenv
 import re
-import csv
 
 # Load environment variables
 load_dotenv()
@@ -102,14 +101,17 @@ DB_USER = os.getenv("DATABASE_USER", "")
 DB_PASSWORD = os.getenv("DATABASE_PASSWORD", "")
 DB_NAME = os.getenv("DATABASE_NAME", "")
 
-DB_SIGNALS_CACHE: List[str] = []
+DB_SIGNALS_CACHE: Dict[str, List[str]] = {}  # Keyed by trip_id
 
-def refresh_db_signals_cache() -> int:
-    """Fetch distinct signal names into DB_SIGNALS_CACHE. Returns count or 0 on failure."""
+def refresh_db_signals_cache(trip_id: str) -> int:
+    """Fetch distinct signal names into DB_SIGNALS_CACHE for a specific trip_id. Returns count or 0 on failure."""
     global DB_SIGNALS_CACHE
+    logger.info(f"[CACHE MISS] Running SQL query for trip_id={trip_id} (not found in cache)")
     if not (DB_HOST and DB_USER and DB_NAME):
+        logger.warning(f"[CACHE MISS] Cannot run SQL query for trip_id={trip_id}: DB credentials not configured")
         return 0
     try:
+        logger.info(f"[SQL QUERY] Connecting to MySQL {DB_HOST}:{DB_PORT}/{DB_NAME} for trip_id={trip_id}")
         conn = mysql.connector.connect(
             host=DB_HOST,
             port=DB_PORT,
@@ -120,12 +122,15 @@ def refresh_db_signals_cache() -> int:
         )
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT name FROM `signal` LIMIT 9999;")
+            query = "SELECT DISTINCT name FROM `signal` LIMIT 9999;"
+            logger.info(f"[SQL QUERY] Executing: {query} for trip_id={trip_id}")
+            cursor.execute(query)
             rows = cursor.fetchall()
             names = [r[0] for r in rows if r and isinstance(r[0], str) and r[0].strip()]
-            DB_SIGNALS_CACHE = sorted(set(names))
-            logger.info(f"Loaded {len(DB_SIGNALS_CACHE)} signals from DB {DB_NAME}")
-            return len(DB_SIGNALS_CACHE)
+            signals = sorted(set(names))
+            DB_SIGNALS_CACHE[trip_id] = signals
+            logger.info(f"[SQL QUERY] Successfully loaded {len(signals)} signals from DB {DB_NAME} for trip_id {trip_id} and cached")
+            return len(signals)
         finally:
             try:
                 cursor.close()
@@ -133,13 +138,20 @@ def refresh_db_signals_cache() -> int:
                 pass
             conn.close()
     except Exception as e:
-        logger.warning(f"Failed to load signals from DB: {e}")
+        logger.warning(f"[SQL QUERY] Failed to load signals from DB for trip_id {trip_id}: {e}")
         return 0
 
-def get_known_signals() -> List[str]:
-    if not DB_SIGNALS_CACHE:
-        refresh_db_signals_cache()
-    return DB_SIGNALS_CACHE
+def get_known_signals(trip_id: str) -> List[str]:
+    """Get cached signals for trip_id, or fetch from DB if not cached."""
+    if trip_id not in DB_SIGNALS_CACHE:
+        logger.info(f"[CACHE] trip_id={trip_id} not in cache, fetching from DB...")
+        refresh_db_signals_cache(trip_id)
+    else:
+        cached_count = len(DB_SIGNALS_CACHE.get(trip_id, []))
+        logger.info(f"[CACHE HIT] trip_id={trip_id} found in cache with {cached_count} signals (no SQL query needed)")
+    signals = DB_SIGNALS_CACHE.get(trip_id, [])
+    logger.info(f"[CACHE] Returning {len(signals)} signals for trip_id={trip_id}")
+    return signals
 
 
 def score_signal(query: str, signal_name: str) -> float:
@@ -190,8 +202,15 @@ def best_signals_for_query(
     threshold: float = 100.0,
     pool: Optional[List[str]] = None,
     filter_pred: Optional[callable] = None,
+    trip_id: Optional[str] = None,
 ) -> List[Tuple[str, float]]:
-    signals_source = pool if pool is not None else get_known_signals()
+    if pool is not None:
+        signals_source = pool
+    elif trip_id is not None:
+        signals_source = get_known_signals(trip_id)
+    else:
+        # Fallback to default trip_id if not provided
+        signals_source = get_known_signals(TRIP_ID)
     if not signals_source:
         return []
     if filter_pred:
@@ -269,8 +288,8 @@ def score_signal_with_details(query: str, signal_name: str) -> Tuple[float, Dict
     }
     return float(score), details
 
-SIGNALS = ", ".join(get_known_signals())
-logger.info("-- -- -- -- json dumps: " + json.dumps(SIGNALS))
+# SIGNALS will be initialized lazily when needed with a specific trip_id
+# Removed module-level SIGNALS initialization - now loaded per trip_id when needed
 
 async def call_gemini(prompt: str) -> str:
     """Call Gemini API to generate content"""
@@ -371,15 +390,24 @@ async def fetch_vehicle_data(signals: str = "mobile_speed") -> Dict[str, Any]:
         response.raise_for_status()
         return response.json()
 
-def is_vehicle_data_query(message: str) -> bool:
+def is_vehicle_data_query(message: str, trip_id: Optional[str] = None) -> bool:
     """Determine via fuzzy matching against known signals and query intent terms."""
     # Quick intent words
     intents = ["average", "mean", "median", "min", "max", "top", "bottom", "compare", "correlation", "corr", "speed", "temperature", "voltage", "current"]
     ml = message.lower()
     intent_hit = any(w in ml for w in intents)
-    # Fuzzy signal matches
-    matches = best_signals_for_query(message, max_signals=3, threshold=100.0)
-    return intent_hit or len(matches) > 0
+    # Fuzzy signal matches - only use cache if trip_id is provided (to avoid wrong cache lookups)
+    # If trip_id is None, try to extract it from message, but don't default to TRIP_ID
+    if trip_id is None:
+        trip_id = extract_trip_id(message)  # Don't use TRIP_ID default here to avoid wrong cache
+    # Only do signal matching if we have a trip_id (to use correct cache)
+    # If no trip_id, rely on intent words only
+    if trip_id is not None:
+        matches = best_signals_for_query(message, max_signals=3, threshold=100.0, trip_id=trip_id)
+        return intent_hit or len(matches) > 0
+    else:
+        # No trip_id available - just check intent words (don't use cache with wrong trip_id)
+        return intent_hit
 
 async def generate_pandas_script(query: str, suggested_signals: List[str]) -> str:
     """Generate a Pandas script to process vehicle data.
@@ -671,8 +699,12 @@ async def handle_query(request: ChatRequest):
                 error="Empty message"
             )
         
-        # Check if it's a vehicle data query
-        if not is_vehicle_data_query(message):
+        # Extract trip_id early to use in cache lookups
+        chosen_trip = extract_trip_id(message)
+        
+        # Check if it's a vehicle data query (only use cache if trip_id is available)
+        # If trip_id is None, we'll ask for clarification after this check
+        if not is_vehicle_data_query(message, trip_id=chosen_trip):
             return ChatResponse(
                 success=True,
                 message="Sorry, I can't help you with that. I can only assist with vehicle data queries."
@@ -690,8 +722,7 @@ async def handle_query(request: ChatRequest):
                 data={"intent": "clarify_cell_metric", "metric": metric}
             )
 
-        # Clarify trip/run if user did not specify any trip id
-        chosen_trip = extract_trip_id(message)
+        # Clarify trip/run if user did not specify any trip id (do this after vehicle query check)
         if chosen_trip is None:
             return ChatResponse(
                 success=True,
@@ -716,10 +747,9 @@ async def handle_query(request: ChatRequest):
         
         # Generate Pandas script
         try:
-            # After clarifications, initialize signals from DB (once per process)
-            if not DB_SIGNALS_CACHE:
-                refresh_db_signals_cache()
-
+            # Use trip_id extracted earlier (or default to TRIP_ID if not specified)
+            chosen_trip = chosen_trip or TRIP_ID
+            
             # Cache by normalized query to reduce model usage
             normalized = message.strip().lower()
             cached = _script_cache.get(normalized)
@@ -727,8 +757,8 @@ async def handle_query(request: ChatRequest):
             if cached and (now - cached["ts"]) < SCRIPT_CACHE_TTL_SECONDS:
                 pandas_script = cached["script"]
             else:
-                # Select suggested signals for the query
-                pool = get_known_signals()
+                # Select suggested signals for the query (cache is checked inside get_known_signals)
+                pool = get_known_signals(chosen_trip)
                 # Try exact inference for cell+metric first
                 exact = infer_specific_signals(message, pool)
                 suggested_pairs: List[Tuple[str, float]] = []
@@ -785,8 +815,7 @@ async def handle_query(request: ChatRequest):
         
         # Execute the script
         try:
-            # use clarified/parsed trip id
-            chosen_trip = extract_trip_id(message) or TRIP_ID
+            # use clarified/parsed trip id (already extracted above)
             result, debug_info, image_b64 = await execute_pandas_script(pandas_script, trip_id_override=chosen_trip)
             # Include signal scoring info for transparency
             if 'top_explained' not in locals():

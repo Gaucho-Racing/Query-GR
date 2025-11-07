@@ -231,6 +231,10 @@ Results include a single-line answer; the executed script, signal scoring and op
 ### Signal Selection & Fuzzy Mapping
 
 - Signals come from MySQL (`SELECT DISTINCT name FROM signal LIMIT 9999`) and are cached in-memory for scoring (no CSV required).
+- **Caching**: Signals are cached per `trip_id` to optimize database queries. The SQL query only runs if the requested `trip_id` is not already in the cache. For example:
+  - If cache has trip_id 3 and user requests trip_id 3 → uses cache (no SQL query)
+  - If cache has trip_id 3 and user requests trip_id 4 → runs SQL query and caches trip_id 4
+  - If cache has trip_id 3 and user requests trip_id 3 again → uses cache (no SQL query)
 - Queries are mapped to signals using a 0–200 score (0 best). The lowest-scored signal(s) are chosen.
 - Exact inference: patterns like "cell 16 temperature" map directly to `acu_cell16_temp`; "cell 16 voltage" maps to `acu_cell16_voltage`.
 - For correlation/"vs" queries, the top two signals are selected.
