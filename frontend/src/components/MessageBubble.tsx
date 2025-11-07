@@ -27,7 +27,18 @@ const MessageBubble = ({ message }: MessageBubbleProps) => {
             <span className="ml-2">Thinking...</span>
           </div>
         ) : (
-          <p className="text-md">{message.content}</p>
+          <div className="space-y-2">
+            {message.content ? (
+              <p className="text-md">{message.content}</p>
+            ) : null}
+            {message.imageBase64 ? (
+              <img
+                src={`data:image/png;base64,${message.imageBase64}`}
+                alt="Result graph"
+                className="rounded-lg max-w-full h-auto border border-gray-300 dark:border-gray-600"
+              />
+            ) : null}
+          </div>
         )}
         <p
           className={`text-sm mt-1 ${

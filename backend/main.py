@@ -5,7 +5,7 @@ import httpx
 import pandas as pd
 import json
 import logging
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 from time import time, sleep
 import signal
 import os
@@ -325,6 +325,13 @@ Support advanced queries like:
 - "min/median/max of mobile_speed"
  - "correlation between temperature and voltage signals"
 
+Graphing:
+- If the user asks to graph/plot (keywords: graph, plot, vs), create a Matplotlib plot (import matplotlib.pyplot as plt).
+- Label axes with units when applicable (Voltage (V), Temperature (C), Speed (m/s) if derivable).
+- Use reasonable figure size and grid; add title.
+- Save the plot to a PNG buffer (io.BytesIO), base64-encode it, and call set_image_base64(encoded_str).
+- Still print a brief one-line caption summarizing what was plotted.
+
 Make your script resilient and efficient.
 
 Requirements:
@@ -351,7 +358,7 @@ Requirements:
         logger.info(f"Generated script length={len(script)} for query='{query[:60]}'... suggested={suggested}")
     return script
 
-async def execute_pandas_script(script: str) -> tuple[str, Dict[str, Any]]:
+async def execute_pandas_script(script: str) -> tuple[str, Dict[str, Any], Optional[str]]:
     """Execute the generated Pandas script safely"""
     def sanitize_generated_code(raw: str) -> str:
         # Extract code from triple backtick fences if present, drop language tag
@@ -368,12 +375,17 @@ async def execute_pandas_script(script: str) -> tuple[str, Dict[str, Any]]:
     try:
         sanitized = sanitize_generated_code(script)
         # Create a safe execution environment
-        captured: Dict[str, Any] = {"__captured_result": None}
+        captured: Dict[str, Any] = {"__captured_result": None, "__image_base64": None}
         def set_result(value: Any) -> None:
             try:
                 captured["__captured_result"] = value
             except Exception:
                 captured["__captured_result"] = None
+        def set_image_base64(value: Any) -> None:
+            try:
+                captured["__image_base64"] = value
+            except Exception:
+                captured["__image_base64"] = None
 
         def http_get(url: str):
             logger.info(f"AI script HTTP GET: {url}")
@@ -400,9 +412,12 @@ async def execute_pandas_script(script: str) -> tuple[str, Dict[str, Any]]:
             'httpx': httpx,
             'print': print,
             'set_result': set_result,
+            'set_image_base64': set_image_base64,
             'http_get': http_get,
             'build_url': build_url,
-            # 'get_possible_signals': get_possible_signals
+            # 'get_possible_signals': get_possible_signals,
+            'io': __import__('io'),
+            'base64': __import__('base64'),
         }
         
         # Capture the output
@@ -450,23 +465,23 @@ async def execute_pandas_script(script: str) -> tuple[str, Dict[str, Any]]:
             "duration_ms": duration_ms,
         }
         if result:
-            return result, debug
+            return result, debug, captured.get("__image_base64")
 
         # Fallback: try to read common result variables if nothing was printed
         for var_name in ("result", "answer", "output"):
             if var_name in safe_globals and safe_globals[var_name] is not None:
                 try:
                     debug["fallback_var"] = var_name
-                    return str(safe_globals[var_name]), debug
+                    return str(safe_globals[var_name]), debug, captured.get("__image_base64")
                 except Exception:
                     continue
         # Fallback 2: captured result via set_result
         if captured.get("__captured_result") is not None:
             debug["fallback_var"] = "__captured_result"
-            return str(captured["__captured_result"]), debug
+            return str(captured["__captured_result"]), debug, captured.get("__image_base64")
 
         debug["reason"] = "no stdout and no fallback variable"
-        return "No output generated", debug
+        return "No output generated", debug, captured.get("__image_base64")
         
     except SyntaxError as e:
         logger.error(f"Pandas script syntax error: {e}\nOriginal script:\n{script}")
@@ -496,6 +511,18 @@ async def handle_query(request: ChatRequest):
             return ChatResponse(
                 success=True,
                 message="Sorry, I can't help you with that. I can only assist with vehicle data queries."
+            )
+
+        # Clarify ambiguous cell queries without a cell number (e.g., "give me cell temp")
+        ml = message.lower()
+        if re.search(r"\bcell\b", ml) and (
+            re.search(r"\btemp(?:erature)?\b", ml) or re.search(r"\bvolt(?:age)?\b", ml)
+        ) and not re.search(r"\b\d{1,3}\b", ml):
+            metric = "voltage" if re.search(r"\bvolt", ml) else "temperature"
+            return ChatResponse(
+                success=True,
+                message=f"Which cell number for {metric}? e.g., 16 or 110",
+                data={"intent": "clarify_cell_metric", "metric": metric}
             )
         
         # Fetch vehicle data
@@ -556,7 +583,7 @@ async def handle_query(request: ChatRequest):
         
         # Execute the script
         try:
-            result, debug_info = await execute_pandas_script(pandas_script)
+            result, debug_info, image_b64 = await execute_pandas_script(pandas_script)
             # Include signal scoring info for transparency
             if 'top_explained' not in locals():
                 explained_all = []
@@ -572,6 +599,8 @@ async def handle_query(request: ChatRequest):
                     "top": signal_scoring_payload,
                 },
             }
+            if image_b64:
+                data_payload["image_base64"] = image_b64
             return ChatResponse(
                 success=True,
                 message=result,

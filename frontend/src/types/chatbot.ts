@@ -4,6 +4,7 @@ export interface Message {
   sender: 'user' | 'bot';
   timestamp: Date;
   isLoading?: boolean;
+  imageBase64?: string;
 }
 
 export interface ChatResponse {
