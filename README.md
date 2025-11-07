@@ -232,13 +232,8 @@ Results include a single-line answer; the executed script, signal scoring and op
 
 - Signals come from MySQL (`SELECT DISTINCT name FROM signal LIMIT 9999`) and are cached in-memory for scoring (no CSV required).
 - Queries are mapped to signals using a 0–200 score (0 best). The lowest-scored signal(s) are chosen.
-- Exact inference: patterns like “cell 16 temperature” map directly to `acu_cell16_temp`; “cell 16 voltage” maps to `acu_cell16_voltage`.
-- For correlation/“vs” queries, the top two signals are selected.
-
-### Fuzzy Signal Mapping
-
-- The backend reads `backend/signals.csv` and scores candidate signals 0–200 (0=best).
-- A query like "highest acu cell 16 voltage" maps to `acu_cell16_voltage` automatically.
+- Exact inference: patterns like "cell 16 temperature" map directly to `acu_cell16_temp`; "cell 16 voltage" maps to `acu_cell16_voltage`.
+- For correlation/"vs" queries, the top two signals are selected.
 - If best score > 100, the query is considered unrelated and a polite fallback is returned.
 - Response includes `data.signal_scoring` for transparency.
 
@@ -246,5 +241,5 @@ Results include a single-line answer; the executed script, signal scoring and op
 
 - If a query mentions `cell` and `temperature` or `voltage` but lacks a cell number, backend responds with:
   "Which cell number for temperature/voltage? e.g., 16 or 110" and data `{ intent: "clarify_cell_metric", metric: "temperature|voltage" }`.
-- The frontend merges the follow-up (e.g., "cell 16") into the original request to preserve the user’s metric intent (e.g., only "max").
+- The frontend merges the follow-up (e.g., "cell 16") into the original request to preserve the user's metric intent (e.g., only "max").
 - If a query omits the trip/run, backend asks: "Which trip (run) number? e.g., 3" and data `{ intent: "clarify_trip" }`. Frontend merges the run number into the last query.
