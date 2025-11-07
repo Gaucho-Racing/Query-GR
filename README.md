@@ -189,17 +189,11 @@ Health check endpoint for monitoring.
 Create a `.env` in backend:
 
 ```env
+# Gemini API Configuration
 GEMINI_API_KEY=your_gemini_api_key_here
-# Optional tuning (defaults shown)
-# GEMINI_MODEL=gemini-1.5-flash
-# GEMINI_TIMEOUT=60
-# GEMINI_MAX_RETRIES=2
-# GEMINI_RETRY_BACKOFF=1.0
-# DEBUG_ANALYSIS=false
-# GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1
-# VEHICLE_DATA_TIMEOUT=30
-# SCRIPT_TIMEOUT=20
-## MySQL connection for signals catalog (required for fuzzy mapping)
+GEMINI_MODEL=your_gemini_model_here
+
+# Database
 DATABASE_HOST=verstappen-ec2.gauchoracing.com
 DATABASE_PORT=3306
 DATABASE_USER=your_username_here
