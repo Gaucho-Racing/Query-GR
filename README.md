@@ -199,7 +199,12 @@ GEMINI_API_KEY=your_gemini_api_key_here
 # GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1
 # VEHICLE_DATA_TIMEOUT=30
 # SCRIPT_TIMEOUT=20
-# SIGNALS_CSV_PATH=backend/signals.csv
+## MySQL connection for signals catalog (required for fuzzy mapping)
+DATABASE_HOST=verstappen-ec2.gauchoracing.com
+DATABASE_PORT=3306
+DATABASE_USER=your_username_here
+DATABASE_PASSWORD=your_password_here
+DATABASE_NAME=mapache
 ```
 
 ### AI Configuration and Behavior
@@ -210,6 +215,8 @@ GEMINI_API_KEY=your_gemini_api_key_here
 - The executor injects helpers:
   - `build_url(signals: list[str])` constructs the exact mapache URL.
   - `http_get(url)` logs the URL and returns a real Response for `.raise_for_status()` and `.json()`.
+  - `parse_series(payload, signals)` parses JSON into numeric Series; for single signals it returns a Series, for multiple it returns `{signal: Series}`.
+  - `parse_series_df(payload, signals)` returns a DataFrame (safe for `.empty`).
 - Transient errors are handled with retries/backoff; timeouts are configurable.
 
 ### Advanced Queries Supported
@@ -220,6 +227,13 @@ GEMINI_API_KEY=your_gemini_api_key_here
 - Graphs: plot temp vs voltage, axes annotated with units (V, C)
 
 Results include a single-line answer; the executed script, signal scoring and optional debug/plot are returned in `data`.
+
+### Signal Selection & Fuzzy Mapping
+
+- Signals come from MySQL (`SELECT DISTINCT name FROM signal LIMIT 9999`) and are cached in-memory for scoring (no CSV required).
+- Queries are mapped to signals using a 0–200 score (0 best). The lowest-scored signal(s) are chosen.
+- Exact inference: patterns like “cell 16 temperature” map directly to `acu_cell16_temp`; “cell 16 voltage” maps to `acu_cell16_voltage`.
+- For correlation/“vs” queries, the top two signals are selected.
 
 ### Fuzzy Signal Mapping
 
@@ -233,3 +247,4 @@ Results include a single-line answer; the executed script, signal scoring and op
 - If a query mentions `cell` and `temperature` or `voltage` but lacks a cell number, backend responds with:
   "Which cell number for temperature/voltage? e.g., 16 or 110" and data `{ intent: "clarify_cell_metric", metric: "temperature|voltage" }`.
 - The frontend merges the follow-up (e.g., "cell 16") into the original request to preserve the user’s metric intent (e.g., only "max").
+- If a query omits the trip/run, backend asks: "Which trip (run) number? e.g., 3" and data `{ intent: "clarify_trip" }`. Frontend merges the run number into the last query.
