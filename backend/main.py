@@ -9,6 +9,7 @@ from typing import Dict, Any, List, Tuple, Optional
 from time import time, sleep
 import signal
 import os
+import mysql.connector  # requires mysql-connector-python
 from dotenv import load_dotenv
 import re
 import csv
@@ -66,31 +67,85 @@ TRIP_ID = "4"
 VEHICLE_DATA_TIMEOUT = float(os.getenv("VEHICLE_DATA_TIMEOUT", "60"))
 SCRIPT_TIMEOUT = int(os.getenv("SCRIPT_TIMEOUT", "60"))
 
+def extract_trip_id(message: str) -> Optional[str]:
+    ml = message.lower()
+    # patterns: "trip 3", "run 3", "in run 3", "3rd run", "third trip"
+    m = re.search(r"\btrip\s+(\d{1,3})\b", ml)
+    if m:
+        return m.group(1)
+    m = re.search(r"\brun\s+(\d{1,3})\b", ml)
+    if m:
+        return m.group(1)
+    m = re.search(r"\b(\d{1,3})(?:st|nd|rd|th)\s+(?:run|trip)\b", ml)
+    if m:
+        return m.group(1)
+    ord_map = {
+        'first':1,'second':2,'third':3,'fourth':4,'fifth':5,'sixth':6,'seventh':7,'eighth':8,'ninth':9,'tenth':10,
+        'eleventh':11,'twelfth':12,'thirteenth':13,'fourteenth':14,'fifteenth':15,'sixteenth':16,'seventeenth':17,
+        'eighteenth':18,'nineteenth':19,'twentieth':20
+    }
+    m = re.search(r"\b(" + "|".join(ord_map.keys()) + r")\s+(?:run|trip)\b", ml)
+    if m:
+        return str(ord_map[m.group(1)])
+    return None
+
 # Script generation cache (to reduce OpenRouter calls)
 SCRIPT_CACHE_TTL_SECONDS = 3600  # 1 hour
 _script_cache: Dict[str, Dict[str, Any]] = {}
 
-# Load known signal names from CSV for fuzzy matching
-SIGNALS_CSV_PATH = os.getenv("SIGNALS_CSV_PATH", os.path.join(os.path.dirname(__file__), "signals.csv"))
-KNOWN_SIGNALS: List[str] = []
-try:
-    with open(SIGNALS_CSV_PATH, newline="", encoding="utf-8") as f:
-        reader = csv.reader(f)
-        for row in reader:
-            for cell in row:
-                cell = cell.strip()
-                if cell:
-                    KNOWN_SIGNALS.append(cell)
-    KNOWN_SIGNALS = sorted(set(KNOWN_SIGNALS))
-    logger.info(f"Loaded {len(KNOWN_SIGNALS)} signals from {SIGNALS_CSV_PATH}")
-except Exception as e:
-    logger.warning(f"Failed to load signals from {SIGNALS_CSV_PATH}: {e}")
+"""Signals are sourced from the database and cached in-memory."""
+
+# DB configuration for signals list (optional; used after clarifications)
+DB_HOST = os.getenv("DATABASE_HOST", "")
+DB_PORT = int(os.getenv("DATABASE_PORT", "3306"))
+DB_USER = os.getenv("DATABASE_USER", "")
+DB_PASSWORD = os.getenv("DATABASE_PASSWORD", "")
+DB_NAME = os.getenv("DATABASE_NAME", "")
+
+DB_SIGNALS_CACHE: List[str] = []
+
+def refresh_db_signals_cache() -> int:
+    """Fetch distinct signal names into DB_SIGNALS_CACHE. Returns count or 0 on failure."""
+    global DB_SIGNALS_CACHE
+    if not (DB_HOST and DB_USER and DB_NAME):
+        return 0
+    try:
+        conn = mysql.connector.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            connection_timeout=10,
+        )
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT name FROM `signal` LIMIT 9999;")
+            rows = cursor.fetchall()
+            names = [r[0] for r in rows if r and isinstance(r[0], str) and r[0].strip()]
+            DB_SIGNALS_CACHE = sorted(set(names))
+            logger.info(f"Loaded {len(DB_SIGNALS_CACHE)} signals from DB {DB_NAME}")
+            return len(DB_SIGNALS_CACHE)
+        finally:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+            conn.close()
+    except Exception as e:
+        logger.warning(f"Failed to load signals from DB: {e}")
+        return 0
+
+def get_known_signals() -> List[str]:
+    if not DB_SIGNALS_CACHE:
+        refresh_db_signals_cache()
+    return DB_SIGNALS_CACHE
 
 
 def score_signal(query: str, signal_name: str) -> float:
     """Return a float score in [0,200]: 0 best match, 200 worst.
     Uses substring cues (keywords, numbers) and difflib ratio.
-    """
+        """
     q = query.lower()
     s = signal_name.lower()
 
@@ -129,12 +184,41 @@ def score_signal(query: str, signal_name: str) -> float:
     return float(score)
 
 
-def best_signals_for_query(query: str, max_signals: int = 6, threshold: float = 100.0) -> List[Tuple[str, float]]:
-    if not KNOWN_SIGNALS:
+def best_signals_for_query(
+    query: str,
+    max_signals: int = 6,
+    threshold: float = 100.0,
+    pool: Optional[List[str]] = None,
+    filter_pred: Optional[callable] = None,
+) -> List[Tuple[str, float]]:
+    signals_source = pool if pool is not None else get_known_signals()
+    if not signals_source:
         return []
-    scored = [(sig, score_signal(query, sig)) for sig in KNOWN_SIGNALS]
+    if filter_pred:
+        signals_source = [s for s in signals_source if filter_pred(s)]
+    scored = [(sig, score_signal(query, sig)) for sig in signals_source]
     scored.sort(key=lambda x: x[1])
     return [(sig, sc) for sig, sc in scored[:max_signals] if sc <= threshold]
+
+
+def infer_specific_signals(message: str, signals_pool: List[str]) -> List[str]:
+    ml = message.lower()
+    # detect cell number
+    m = re.search(r"\bcell\s*(\d{1,3})\b", ml)
+    cell_num = m.group(1) if m else None
+    wants_temp = bool(re.search(r"\btemp(?:erature)?\b", ml))
+    wants_volt = bool(re.search(r"\bvolt(?:age)?\b", ml))
+    selected: List[str] = []
+    if cell_num:
+        if wants_temp:
+            candidate = f"acu_cell{cell_num}_temp"
+            if candidate in signals_pool:
+                selected.append(candidate)
+        if wants_volt:
+            candidate = f"acu_cell{cell_num}_voltage"
+            if candidate in signals_pool:
+                selected.append(candidate)
+    return selected
 
 
 def score_signal_with_details(query: str, signal_name: str) -> Tuple[float, Dict[str, Any]]:
@@ -185,10 +269,7 @@ def score_signal_with_details(query: str, signal_name: str) -> Tuple[float, Dict
     }
     return float(score), details
 
-SIGNALS = ""
-df = pd.read_csv("signals.csv")
-for index, row in df.iterrows():
-    SIGNALS += row["name"] + ", "
+SIGNALS = ", ".join(get_known_signals())
 logger.info("-- -- -- -- json dumps: " + json.dumps(SIGNALS))
 
 async def call_gemini(prompt: str) -> str:
@@ -305,13 +386,12 @@ async def generate_pandas_script(query: str, suggested_signals: List[str]) -> st
     The generated script MUST fetch the JSON from the vehicle API itself using httpx (or requests),
     parse into pandas, compute the requested metric, and print a concise result.
     """
-    suggested = ", ".join(suggested_signals) if (suggested_signals := suggested_signals) else ""
+    suggested = ", ".join(suggested_signals) if suggested_signals else ""
     prompt = f"""
 You are a data analysis expert. Generate a Python script that:
 
-1. Use ONLY signals from the allowed list (separated by ", "): {SIGNALS}
-   Suggested signals based on the user query: {suggested}
-   Build the signals parameter as a string list (comma-separated, no spaces) and use the suggested ones when appropriate.
+1. Use EXACTLY these signals (comma-separated, no spaces): {suggested}
+   Do not invent or rename signals; if a suggested signal is empty, return a one-line message that no matching signals were found.
    Use the provided helper `build_url(signals: list[str])` to construct the URL. Do not use data from any other API. Do not create mock data. Do not make up data without fetching the API. If you do not use the build_url and http_get helpers then do not return any data.
    Then use `http_get(url)` to fetch the JSON.
 2. Computes the metric requested by the user query below
@@ -339,14 +419,14 @@ Requirements:
 - Use the provided helper: http_get(url) instead of calling httpx directly (this logs the URL and returns a Response for .json()).
 - Make the HTTP GET within the script to fetch the JSON data.
 - Do not use any external variables; construct the URL with params inside the script.
-- The only defined global variables/functions are: pd json httpx print set_result http_get build_url, do not call any other undefined variables/functions
+- The only defined globals are: pd json httpx print set_result set_image_base64 http_get build_url parse_series parse_series_df io base64
 - Parse the JSON robustly. Possible shapes include:
   * {{"signals": {{"mobile_speed": [...]}}}}
   * {{"data": {{"mobile_speed": [...]}}}}
   * {{"data": {{"data": [{{...}}] }}}}
   * {{"mobile_speed": [...]}}
   * A list of dicts containing fields like "mobile_speed", "value" or similar.
-  Try these paths in order and handle missing keys gracefully. Flatten into a numeric series.
+  Use the provided parse_series(payload, [signals]) helper to flatten robustly into numeric series.
 - Clean the series: coerce to numeric, drop nulls, then compute the metric requested by the user query (e.g., average/mean, min, max, median).
  - For correlation tasks, align signals on produced_at timestamps when applicable; compute Pearson correlation.
 - At the end, set a variable named `result` to the final one-line string AND call both `print(result)` and `set_result(result)` (available at runtime).
@@ -358,7 +438,7 @@ Requirements:
         logger.info(f"Generated script length={len(script)} for query='{query[:60]}'... suggested={suggested}")
     return script
 
-async def execute_pandas_script(script: str) -> tuple[str, Dict[str, Any], Optional[str]]:
+async def execute_pandas_script(script: str, trip_id_override: Optional[str] = None) -> tuple[str, Dict[str, Any], Optional[str]]:
     """Execute the generated Pandas script safely"""
     def sanitize_generated_code(raw: str) -> str:
         # Extract code from triple backtick fences if present, drop language tag
@@ -392,19 +472,102 @@ async def execute_pandas_script(script: str) -> tuple[str, Dict[str, Any], Optio
             resp = httpx.get(url, timeout=VEHICLE_DATA_TIMEOUT)
             return resp
 
-        def build_url(signals: list[str]):
-            # Construct signals query (comma-separated, no spaces)
-            sig_param = ",".join(s.strip() for s in signals if s and isinstance(s, str))
+        def build_url(signals: list[str] | str, *args, **kwargs):
+            # Accept optional trip_id passed by generated code, but prefer override
+            incoming_trip = kwargs.get('trip_id')
+            # Normalize signals input
+            if isinstance(signals, str):
+                sig_param = ",".join([p.strip() for p in signals.split(',') if p.strip()])
+            else:
+                sig_param = ",".join(s.strip() for s in signals if s and isinstance(s, str))
+            trip_to_use = trip_id_override or incoming_trip or TRIP_ID
             base = (
-                f"{VEHICLE_API_URL}?vehicle_id={VEHICLE_ID}&trip_id={TRIP_ID}"
+                f"{VEHICLE_API_URL}?vehicle_id={VEHICLE_ID}&trip_id={trip_to_use}"
                 f"&signals={sig_param}&token={VEHICLE_API_TOKEN}"
             )
             logger.info(f"AI script build_url: {base}")
             return base
+
+        def parse_series(payload: Any, signals: list[str] | str):
+            """Parse payload into pandas Series.
+            - If a single signal name (string without commas) is provided, returns a pandas.Series
+            - If multiple signals (list or comma-separated string), returns a dict {signal: Series}
+            All Series are coerced to numeric and NaNs dropped.
+            """
+            try:
+                if isinstance(signals, str):
+                    raw_parts = [p.strip() for p in signals.split(',') if p.strip()]
+                    single = len(raw_parts) == 1
+                    sigs = raw_parts
+                else:
+                    single = len(signals) == 1
+                    sigs = [s.strip() for s in signals if s]
+            except Exception:
+                sigs = []
+                single = False
+            rows = None
+            if isinstance(payload, dict):
+                try:
+                    if isinstance(payload.get('data'), dict) and isinstance(payload['data'].get('data'), list):
+                        rows = payload['data']['data']
+                    elif isinstance(payload.get('data'), list):
+                        rows = payload['data']
+                    elif isinstance(payload.get('signals'), dict):
+                        # flatten signals dict of arrays into row-wise table if lengths match
+                        sig_dict = payload['signals']
+                        max_len = max((len(v) for v in sig_dict.values() if isinstance(v, list)), default=0)
+                        rows = [ {k: (sig_dict.get(k)[i] if i < len(sig_dict.get(k, [])) else None) for k in sig_dict.keys()} for i in range(max_len) ]
+                    else:
+                        rows = []
+                except Exception:
+                    rows = []
+            elif isinstance(payload, list):
+                rows = payload
+            else:
+                rows = []
+            try:
+                df = pd.DataFrame(rows)
+            except Exception:
+                df = pd.DataFrame()
+            # build outputs
+            if single and sigs:
+                sig = sigs[0]
+                series = None
+                if sig in df.columns:
+                    series = pd.to_numeric(df[sig], errors='coerce').dropna()
+                else:
+                    for col in df.columns:
+                        if isinstance(col, str) and col.lower() == sig.lower():
+                            series = pd.to_numeric(df[col], errors='coerce').dropna()
+                            break
+                return series if series is not None else pd.Series(dtype='float64')
+            else:
+                out: Dict[str, pd.Series] = {}
+                for sig in sigs:
+                    if sig in df.columns:
+                        s = pd.to_numeric(df[sig], errors='coerce').dropna()
+                        out[sig] = s
+                    else:
+                        # try case-insensitive column match
+                        for col in df.columns:
+                            if isinstance(col, str) and col.lower() == sig.lower():
+                                s = pd.to_numeric(df[col], errors='coerce').dropna()
+                                out[sig] = s
+                                break
+                return out
+
+        def parse_series_df(payload: Any, signals: list[str] | str):
+            """Return a DataFrame from parse_series. Columns are signal names.
+            Returns empty DataFrame if nothing parsed.
+            """
+            sd = parse_series(payload, signals)
+            try:
+                df = pd.DataFrame(sd)
+            except Exception:
+                df = pd.DataFrame()
+            return df
         
-        # def get_possible_signals():
-        #     df = pd.read_csv("signals.csv")
-        #     return df
+        # signals are sourced from DB cache only; no CSV fallback here
 
         safe_globals = {
             'pd': pd,
@@ -412,6 +575,8 @@ async def execute_pandas_script(script: str) -> tuple[str, Dict[str, Any], Optio
             'httpx': httpx,
             'print': print,
             'set_result': set_result,
+            'parse_series': parse_series,
+            'parse_series_df': parse_series_df,
             'set_image_base64': set_image_base64,
             'http_get': http_get,
             'build_url': build_url,
@@ -524,6 +689,15 @@ async def handle_query(request: ChatRequest):
                 message=f"Which cell number for {metric}? e.g., 16 or 110",
                 data={"intent": "clarify_cell_metric", "metric": metric}
             )
+
+        # Clarify trip/run if user did not specify any trip id
+        chosen_trip = extract_trip_id(message)
+        if chosen_trip is None:
+            return ChatResponse(
+                success=True,
+                message="Which trip (run) number? e.g., 3",
+                data={"intent": "clarify_trip"}
+            )
         
         # Fetch vehicle data
         try:
@@ -542,6 +716,10 @@ async def handle_query(request: ChatRequest):
         
         # Generate Pandas script
         try:
+            # After clarifications, initialize signals from DB (once per process)
+            if not DB_SIGNALS_CACHE:
+                refresh_db_signals_cache()
+
             # Cache by normalized query to reduce model usage
             normalized = message.strip().lower()
             cached = _script_cache.get(normalized)
@@ -550,18 +728,42 @@ async def handle_query(request: ChatRequest):
                 pandas_script = cached["script"]
             else:
                 # Select suggested signals for the query
-                suggested_pairs = best_signals_for_query(message, max_signals=6, threshold=100.0)
-                suggested_signals = [s for s, sc in suggested_pairs]
+                pool = get_known_signals()
+                # Try exact inference for cell+metric first
+                exact = infer_specific_signals(message, pool)
+                suggested_pairs: List[Tuple[str, float]] = []
+                if exact:
+                    suggested_signals = exact
+                else:
+                    # metric filtering
+                    wants_temp = bool(re.search(r"\btemp(?:erature)?\b", message.lower()))
+                    wants_volt = bool(re.search(r"\bvolt(?:age)?\b", message.lower()))
+                    pred = None
+                    if wants_temp and not wants_volt:
+                        pred = lambda s: isinstance(s, str) and s.endswith("_temp")
+                    elif wants_volt and not wants_temp:
+                        pred = lambda s: isinstance(s, str) and s.endswith("_voltage")
+                    # special: correlation or vs chooses top 2
+                    wants_two = bool(re.search(r"\bvs\b|correl", message.lower()))
+                    pairs = best_signals_for_query(message, max_signals=(2 if wants_two else 6), threshold=100.0, filter_pred=pred, pool=pool)
+                    suggested_pairs = pairs
+                    # Choose the lowest score first (enforce top-1 unless two-signals case)
+                    suggested_signals = [p[0] for p in pairs[: (2 if wants_two else 1)]] or []
                 # Build detailed explanations for top matches (for logging)
+                signals_source = pool
                 explained_all = [
-                    (sig,)+score_signal_with_details(message, sig) for sig in KNOWN_SIGNALS
-                ] if KNOWN_SIGNALS else []
+                    (sig,) + score_signal_with_details(message, sig)
+                    for sig in signals_source
+                ] if signals_source else []
                 explained_all.sort(key=lambda x: x[1])  # sort by score
                 top_explained = explained_all[:10]
                 if top_explained:
                     logger.info(
-                        "Signal scoring top matches: " +
-                        ", ".join(f"{sig}={details['final']} (ratio={details['ratio']}, bonuses={details['bonuses_hit']}, nums={details['numeric_hits']})" for sig, score, details in top_explained)
+                        "Signal scoring top matches: "
+                        + ", ".join(
+                            f"{sig}={details['final']} (ratio={details['ratio']}, bonuses={details['bonuses_hit']}, nums={details['numeric_hits']})"
+                            for sig, score, details in top_explained
+                        )
                     )
                 if not suggested_signals:
                     return ChatResponse(
@@ -583,7 +785,9 @@ async def handle_query(request: ChatRequest):
         
         # Execute the script
         try:
-            result, debug_info, image_b64 = await execute_pandas_script(pandas_script)
+            # use clarified/parsed trip id
+            chosen_trip = extract_trip_id(message) or TRIP_ID
+            result, debug_info, image_b64 = await execute_pandas_script(pandas_script, trip_id_override=chosen_trip)
             # Include signal scoring info for transparency
             if 'top_explained' not in locals():
                 explained_all = []
@@ -598,6 +802,7 @@ async def handle_query(request: ChatRequest):
                     "selected": suggested_pairs if 'suggested_pairs' in locals() else [],
                     "top": signal_scoring_payload,
                 },
+                "trip_id_used": chosen_trip,
             }
             if image_b64:
                 data_payload["image_base64"] = image_b64

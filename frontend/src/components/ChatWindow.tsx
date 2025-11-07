@@ -9,6 +9,7 @@ const ChatWindow = ({ className = "" }: ChatWindowProps) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [lastUserQuery, setLastUserQuery] = useState<string | null>(null);
   const [pendingMetric, setPendingMetric] = useState<"temperature" | "voltage" | null>(null);
+  const [pendingTrip, setPendingTrip] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -32,6 +33,16 @@ const ChatWindow = ({ className = "" }: ChatWindowProps) => {
         contentToSend = `cell ${cellNum} ${pendingMetric}`;
       }
       setPendingMetric(null);
+    }
+    if (pendingTrip) {
+      const matchTrip = content.match(/\b(\d{1,3})\b/);
+      const tripNum = matchTrip ? matchTrip[1] : undefined;
+      if (tripNum && lastUserQuery) {
+        contentToSend = `${lastUserQuery} trip ${tripNum}`;
+      } else if (tripNum) {
+        contentToSend = `trip ${tripNum}`;
+      }
+      setPendingTrip(false);
     }
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -63,6 +74,9 @@ const ChatWindow = ({ className = "" }: ChatWindowProps) => {
       const metric = (response as any)?.data?.metric as string | undefined;
       if (intent === "clarify_cell_metric" && (metric === "temperature" || metric === "voltage")) {
         setPendingMetric(metric);
+      }
+      if (intent === "clarify_trip") {
+        setPendingTrip(true);
       }
 
       const imageBase64 = (response as any)?.data?.image_base64 as string | undefined;
