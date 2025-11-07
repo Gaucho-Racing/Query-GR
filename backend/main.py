@@ -5,12 +5,13 @@ import httpx
 import pandas as pd
 import json
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple
 from time import time, sleep
 import signal
 import os
 from dotenv import load_dotenv
 import re
+import csv
 
 # Load environment variables
 load_dotenv()
@@ -62,12 +63,127 @@ VEHICLE_API_URL = "https://mapache.gauchoracing.com/api/query/signals"
 VEHICLE_API_TOKEN = "01b3939d-678f-44ac-93ff-0d54e09ba3d6"
 VEHICLE_ID = "gr24-main"
 TRIP_ID = "4"
-VEHICLE_DATA_TIMEOUT = float(os.getenv("VEHICLE_DATA_TIMEOUT", "30"))
-SCRIPT_TIMEOUT = int(os.getenv("SCRIPT_TIMEOUT", "20"))
+VEHICLE_DATA_TIMEOUT = float(os.getenv("VEHICLE_DATA_TIMEOUT", "60"))
+SCRIPT_TIMEOUT = int(os.getenv("SCRIPT_TIMEOUT", "60"))
 
 # Script generation cache (to reduce OpenRouter calls)
 SCRIPT_CACHE_TTL_SECONDS = 3600  # 1 hour
 _script_cache: Dict[str, Dict[str, Any]] = {}
+
+# Load known signal names from CSV for fuzzy matching
+SIGNALS_CSV_PATH = os.getenv("SIGNALS_CSV_PATH", os.path.join(os.path.dirname(__file__), "signals.csv"))
+KNOWN_SIGNALS: List[str] = []
+try:
+    with open(SIGNALS_CSV_PATH, newline="", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            for cell in row:
+                cell = cell.strip()
+                if cell:
+                    KNOWN_SIGNALS.append(cell)
+    KNOWN_SIGNALS = sorted(set(KNOWN_SIGNALS))
+    logger.info(f"Loaded {len(KNOWN_SIGNALS)} signals from {SIGNALS_CSV_PATH}")
+except Exception as e:
+    logger.warning(f"Failed to load signals from {SIGNALS_CSV_PATH}: {e}")
+
+
+def score_signal(query: str, signal_name: str) -> float:
+    """Return a float score in [0,200]: 0 best match, 200 worst.
+    Uses substring cues (keywords, numbers) and difflib ratio.
+    """
+    q = query.lower()
+    s = signal_name.lower()
+
+    # Base: substring similarity
+    from difflib import SequenceMatcher
+    ratio = SequenceMatcher(None, q, s).ratio()  # 0..1
+    score = (1.0 - ratio) * 150.0  # 0..150
+
+    # Keyword presence bonuses (lower score)
+    keywords = [
+        ("voltage", 40.0), ("volt", 35.0), ("temp", 35.0), ("temperature", 40.0),
+        ("speed", 30.0), ("current", 30.0), ("cell", 20.0), ("acu", 10.0),
+        ("inverter", 10.0), ("magnetometer", 10.0)
+    ]
+    for kw, bonus in keywords:
+        if kw in q and kw in s:
+            score -= bonus
+
+    # Numeric cues (e.g., cell index like 16)
+    nums = re.findall(r"\d+", q)
+    for n in nums:
+        if n in s:
+            score -= 30.0
+
+    # Penalize if signal_name shares no tokens with query at all
+    qtokens = set(re.findall(r"[a-zA-Z0-9_]+", q))
+    stokens = set(re.findall(r"[a-zA-Z0-9_]+", s))
+    if qtokens and stokens and qtokens.isdisjoint(stokens):
+        score += 20.0
+
+    # Clamp to 0..200
+    if score < 0.0:
+        score = 0.0
+    if score > 200.0:
+        score = 200.0
+    return float(score)
+
+
+def best_signals_for_query(query: str, max_signals: int = 6, threshold: float = 100.0) -> List[Tuple[str, float]]:
+    if not KNOWN_SIGNALS:
+        return []
+    scored = [(sig, score_signal(query, sig)) for sig in KNOWN_SIGNALS]
+    scored.sort(key=lambda x: x[1])
+    return [(sig, sc) for sig, sc in scored[:max_signals] if sc <= threshold]
+
+
+def score_signal_with_details(query: str, signal_name: str) -> Tuple[float, Dict[str, Any]]:
+    """Detailed scoring breakdown for logging and debugging."""
+    q = query.lower()
+    s = signal_name.lower()
+
+    from difflib import SequenceMatcher
+    ratio = SequenceMatcher(None, q, s).ratio()  # 0..1
+    base = (1.0 - ratio) * 150.0
+    score = base
+
+    bonuses_hit: List[str] = []
+    keywords = [
+        ("voltage", 40.0), ("volt", 35.0), ("temp", 35.0), ("temperature", 40.0),
+        ("speed", 30.0), ("current", 30.0), ("cell", 20.0), ("acu", 10.0),
+        ("inverter", 10.0), ("magnetometer", 10.0)
+    ]
+    for kw, bonus in keywords:
+        if kw in q and kw in s:
+            score -= bonus
+            bonuses_hit.append(kw)
+
+    numeric_hits: List[str] = []
+    nums = re.findall(r"\d+", q)
+    for n in nums:
+        if n in s:
+            score -= 30.0
+            numeric_hits.append(n)
+
+    qtokens = set(re.findall(r"[a-zA-Z0-9_]+", q))
+    stokens = set(re.findall(r"[a-zA-Z0-9_]+", s))
+    disjoint = bool(qtokens and stokens and qtokens.isdisjoint(stokens))
+    if disjoint:
+        score += 20.0
+
+    # Clamp
+    score = 0.0 if score < 0.0 else (200.0 if score > 200.0 else score)
+
+    details = {
+        "signal": signal_name,
+        "ratio": round(ratio, 4),
+        "base": round(base, 2),
+        "bonuses_hit": bonuses_hit,
+        "numeric_hits": numeric_hits,
+        "disjoint": disjoint,
+        "final": round(float(score), 2),
+    }
+    return float(score), details
 
 SIGNALS = ""
 df = pd.read_csv("signals.csv")
@@ -170,34 +286,33 @@ async def fetch_vehicle_data(signals: str = "mobile_speed") -> Dict[str, Any]:
         "token": VEHICLE_API_TOKEN
     }
     async with httpx.AsyncClient() as client:
-        response = await client.get(VEHICLE_API_URL, params=params, timeout=30.0)
+        response = await client.get(VEHICLE_API_URL, params=params, timeout=60.0)
         response.raise_for_status()
         return response.json()
 
 def is_vehicle_data_query(message: str) -> bool:
-    """Simple keyword-based detection for vehicle data queries"""
-    vehicle_keywords = [
-        "speed", "mobile_speed", "average", "max", "min", "mean", "median",
-        "vehicle", "data", "telemetry", "trip", "signal", "sensor",
-        "acceleration", "brake", "throttle", "rpm", "fuel", "temperature"
-    ]
-    
-    message_lower = message.lower()
-    return any(keyword in message_lower for keyword in vehicle_keywords)
+    """Determine via fuzzy matching against known signals and query intent terms."""
+    # Quick intent words
+    intents = ["average", "mean", "median", "min", "max", "top", "bottom", "compare", "correlation", "corr", "speed", "temperature", "voltage", "current"]
+    ml = message.lower()
+    intent_hit = any(w in ml for w in intents)
+    # Fuzzy signal matches
+    matches = best_signals_for_query(message, max_signals=3, threshold=100.0)
+    return intent_hit or len(matches) > 0
 
-async def generate_pandas_script(query: str) -> str:
+async def generate_pandas_script(query: str, suggested_signals: List[str]) -> str:
     """Generate a Pandas script to process vehicle data.
     The generated script MUST fetch the JSON from the vehicle API itself using httpx (or requests),
     parse into pandas, compute the requested metric, and print a concise result.
     """
+    suggested = ", ".join(suggested_signals) if (suggested_signals := suggested_signals) else ""
     prompt = f"""
 You are a data analysis expert. Generate a Python script that:
 
-1. Infers the relevant signal names from the user request (e.g., mobile_speed, acu_cellX_temp, acu_cellY_voltage, etc.).
-   Build the signals parameter as a string list.
-   These are the only allowed signals (separated by ", "): {SIGNALS}
-   - Use the user query to find the most relevant signals to query. ONLY use these signals when fetching the API
-   Use the provided helper `build_url(signals: list[str])` to construct the URL. Do not use data from any other API. Do not create mock data. Do not make up data without fetching the API. If you do not use the build_url and http_get helpers then do return any data.
+1. Use ONLY signals from the allowed list (separated by ", "): {SIGNALS}
+   Suggested signals based on the user query: {suggested}
+   Build the signals parameter as a string list (comma-separated, no spaces) and use the suggested ones when appropriate.
+   Use the provided helper `build_url(signals: list[str])` to construct the URL. Do not use data from any other API. Do not create mock data. Do not make up data without fetching the API. If you do not use the build_url and http_get helpers then do not return any data.
    Then use `http_get(url)` to fetch the JSON.
 2. Computes the metric requested by the user query below
 3. Prints a clear, single-line result string for the user
@@ -229,14 +344,12 @@ Requirements:
  - For correlation tasks, align signals on produced_at timestamps when applicable; compute Pearson correlation.
 - At the end, set a variable named `result` to the final one-line string AND call both `print(result)` and `set_result(result)` (available at runtime).
 - Do not include explanations or markdown. Output ONLY executable Python code.
-"""
+    """
 
-    return prompt
-
-    # script = await call_gemini(prompt)
-    # if DEBUG_ANALYSIS:
-    #     logger.info(f"Generated script length={len(script)} for query='{query[:60]}'...")
-    # return script
+    script = await call_gemini(prompt)
+    if DEBUG_ANALYSIS:
+        logger.info(f"Generated script length={len(script)} for query='{query[:60]}'... suggested={suggested}")
+    return script
 
 async def execute_pandas_script(script: str) -> tuple[str, Dict[str, Any]]:
     """Execute the generated Pandas script safely"""
@@ -409,10 +522,26 @@ async def handle_query(request: ChatRequest):
             if cached and (now - cached["ts"]) < SCRIPT_CACHE_TTL_SECONDS:
                 pandas_script = cached["script"]
             else:
-                prompt = await generate_pandas_script(message)
-                pandas_script = await call_gemini(prompt)
-                if DEBUG_ANALYSIS:
-                    logger.info(f"Generated script length={len(pandas_script)} for query='{message[:60]}'...")
+                # Select suggested signals for the query
+                suggested_pairs = best_signals_for_query(message, max_signals=6, threshold=100.0)
+                suggested_signals = [s for s, sc in suggested_pairs]
+                # Build detailed explanations for top matches (for logging)
+                explained_all = [
+                    (sig,)+score_signal_with_details(message, sig) for sig in KNOWN_SIGNALS
+                ] if KNOWN_SIGNALS else []
+                explained_all.sort(key=lambda x: x[1])  # sort by score
+                top_explained = explained_all[:10]
+                if top_explained:
+                    logger.info(
+                        "Signal scoring top matches: " +
+                        ", ".join(f"{sig}={details['final']} (ratio={details['ratio']}, bonuses={details['bonuses_hit']}, nums={details['numeric_hits']})" for sig, score, details in top_explained)
+                    )
+                if not suggested_signals:
+                    return ChatResponse(
+                        success=True,
+                        message="Sorry, I can't help you with that. I can only assist with vehicle data queries.",
+                    )
+                pandas_script = await generate_pandas_script(message, suggested_signals)
                 _script_cache[normalized] = {"script": pandas_script, "ts": now}
         except HTTPException as e:
             # Propagate rate limit or other HTTP errors with headers
@@ -428,7 +557,21 @@ async def handle_query(request: ChatRequest):
         # Execute the script
         try:
             result, debug_info = await execute_pandas_script(pandas_script)
-            data_payload: Dict[str, Any] = {"script": pandas_script, "debug": debug_info}
+            # Include signal scoring info for transparency
+            if 'top_explained' not in locals():
+                explained_all = []
+                top_explained = []
+            signal_scoring_payload = [
+                {"signal": sig, **details} for sig, score, details in (top_explained if top_explained else [])
+            ]
+            data_payload: Dict[str, Any] = {
+                "script": pandas_script,
+                "debug": debug_info,
+                "signal_scoring": {
+                    "selected": suggested_pairs if 'suggested_pairs' in locals() else [],
+                    "top": signal_scoring_payload,
+                },
+            }
             return ChatResponse(
                 success=True,
                 message=result,

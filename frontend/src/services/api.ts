@@ -1,7 +1,7 @@
 import type { ChatResponse, LogRequest } from '../types/chatbot';
 
 const API_BASE_URL = 'http://localhost:8000';
-const DEFAULT_TIMEOUT_MS = 20000; // 20s client-side timeout
+const DEFAULT_TIMEOUT_MS = 60000; // 20s client-side timeout
 
 export const sendMessage = async (message: string, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<ChatResponse> => {
   const controller = new AbortController();
