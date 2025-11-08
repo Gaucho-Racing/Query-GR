@@ -8,7 +8,9 @@ import InputBox from "./InputBox";
 const ChatWindow = ({ className = "" }: ChatWindowProps) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [lastUserQuery, setLastUserQuery] = useState<string | null>(null);
-  const [pendingMetric, setPendingMetric] = useState<"temperature" | "voltage" | null>(null);
+  const [pendingMetric, setPendingMetric] = useState<
+    "temperature" | "voltage" | null
+  >(null);
   const [pendingTrip, setPendingTrip] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -72,14 +74,19 @@ const ChatWindow = ({ className = "" }: ChatWindowProps) => {
       // Handle backend clarification intent
       const intent = (response as any)?.data?.intent as string | undefined;
       const metric = (response as any)?.data?.metric as string | undefined;
-      if (intent === "clarify_cell_metric" && (metric === "temperature" || metric === "voltage")) {
+      if (
+        intent === "clarify_cell_metric" &&
+        (metric === "temperature" || metric === "voltage")
+      ) {
         setPendingMetric(metric);
       }
       if (intent === "clarify_trip") {
         setPendingTrip(true);
       }
 
-      const imageBase64 = (response as any)?.data?.image_base64 as string | undefined;
+      const imageBase64 = (response as any)?.data?.image_base64 as
+        | string
+        | undefined;
       if (imageBase64) {
         const imageMessage: Message = {
           id: (Date.now() + 2).toString(),
@@ -117,7 +124,7 @@ const ChatWindow = ({ className = "" }: ChatWindowProps) => {
 
   return (
     <div
-      className={`flex flex-col h-screen bg-gray-50 dark:bg-gray-900 rounded-2xl {className}`}
+      className={`flex flex-col h-full bg-gray-50 dark:bg-gray-900 rounded-2xl`}
     >
       {/* Header */}
       <div className="rounded-2xl flex items-center justify-between p-4 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
@@ -127,7 +134,7 @@ const ChatWindow = ({ className = "" }: ChatWindowProps) => {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 rounded-2xl">
+      <div className="h-full overflow-y-auto p-4 rounded-2xl">
         {messages.length === 0 && (
           <div className="text-center text-gray-500 dark:text-gray-400 mt-8">
             <p className="text-xl mb-2">Welcome to the Vehicle Data Chatbot!</p>

@@ -23,7 +23,7 @@ const InputBox = ({
   };
 
   return (
-    <div className="flex rounded-2xl items-center space-x-2 p-4 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 ">
+    <div className="flex gap-5 rounded-2xl items-center p-4 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 ">
       <input
         type="text"
         value={message}

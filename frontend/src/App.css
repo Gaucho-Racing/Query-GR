@@ -2,7 +2,7 @@
 
 /* Custom styles for the chatbot */
 .chat-container {
-  height: 100vh;
+  /* height: 100vh; */
   display: flex;
   flex-direction: column;
 }
