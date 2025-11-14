@@ -1,13 +1,13 @@
 import type { ChatResponse, LogRequest } from '../types/chatbot';
 
 const API_BASE_URL = 'http://localhost:8000';
-const DEFAULT_TIMEOUT_MS = 60000; // 20s client-side timeout
+const DEFAULT_TIMEOUT_MS = 120000; // 120s (2 minutes) client-side timeout
 
 export const sendMessage = async (message: string, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<ChatResponse> => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${API_BASE_URL}/query`, {
+    const response = await fetch(`${API_BASE_URL}/llm/query`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

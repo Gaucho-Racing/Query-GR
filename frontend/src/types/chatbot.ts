@@ -1,3 +1,8 @@
+export interface TableData {
+  columns: string[];
+  rows: Record<string, any>[];
+}
+
 export interface Message {
   id: string;
   content: string;
@@ -5,6 +10,7 @@ export interface Message {
   timestamp: Date;
   isLoading?: boolean;
   imageBase64?: string;
+  tableData?: TableData;
 }
 
 export interface ChatResponse {

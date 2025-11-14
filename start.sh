@@ -37,7 +37,7 @@ start_backend() {
     
     # Start backend
     echo "🚀 Starting backend server on http://localhost:8000"
-    uvicorn main:app --reload --host 0.0.0.0 --port 8000 &
+    uvicorn src.main:app --reload --host 0.0.0.0 --port 8000 &
     BACKEND_PID=$!
     
     cd ..

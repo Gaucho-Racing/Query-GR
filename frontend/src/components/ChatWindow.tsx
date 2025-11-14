@@ -60,11 +60,14 @@ const ChatWindow = ({ className = "" }: ChatWindowProps) => {
       }
       const response = await sendMessage(contentToSend);
 
+      const tableData = (response as any)?.data?.table_data as { columns: string[]; rows: Record<string, any>[] } | undefined;
+      
       const botMessage: Message = {
         id: (Date.now() + 1).toString(),
         content: response.message,
         sender: "bot",
         timestamp: new Date(),
+        tableData: tableData,
       };
 
       setMessages((prev) => [...prev, botMessage]);

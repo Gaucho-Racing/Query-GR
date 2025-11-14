@@ -28,8 +28,11 @@ This chatbot provides an intelligent interface for querying vehicle telemetry da
 - 📊 **Live Data**: Fetches real-time vehicle telemetry data
 - 🔄 **Real-time Processing**: Generates and executes custom data analysis scripts
 - 🖼️ **Graphs**: Supports graph/plot queries (e.g., "Graph acu cell 110 temp vs voltage") and returns base64 PNG
+- 📋 **Structured Tables**: "Show all" queries display results in scrollable, formatted tables
 - 📝 **Error Logging**: Comprehensive error tracking and reporting
 - 📱 **Responsive Design**: Works seamlessly on desktop and mobile devices
+- 🔍 **Intelligent Signal Selection**: Automatically maps user queries to correct vehicle signals (e.g., "battery temperature" → all ACU cell temps, "cell voltages" → all ACU cell voltages)
+- 🚀 **Multi-Trip Support**: Query across all trips or specific ranges (e.g., "trips 3-5")
 
 ## How to Run
 
@@ -70,7 +73,16 @@ cp env.example .env
 3. **Run the server:**
 
 ```bash
-uvicorn main:app --reload
+uvicorn src.main:app --reload
+```
+
+Or use the provided startup scripts from the project root:
+```bash
+# Linux/Mac
+./start.sh
+
+# Windows
+start.bat
 ```
 
 The backend API will be available at `http://localhost:8000`
@@ -101,8 +113,11 @@ The backend API will be available at `http://localhost:8000`
 - "What's the maximum inverter temperature recorded?"
 - "What is the average temperature of all the accumulator cells?"
 - "Graph acu cell 110 temp vs voltage" (returns a chart)
+- "Show me all test runs where battery temperature exceeded 25°C AND cell voltages were above 3V" (returns formatted table)
+- "Show me all test runs where motor current draw was above 300A" (returns formatted table)
+- "Show me battery 22 temperature for all trips" (queries all trips)
 
-**Response:** "The average mobile speed for trip 4 is 45.6 km/h."
+**Response:** "The average mobile speed for trip 4 is 45.6 km/h." or formatted table data for "show all" queries.
 
 ### Invalid Queries (Non-Vehicle Data)
 
@@ -113,9 +128,11 @@ The backend API will be available at `http://localhost:8000`
 
 ## API Endpoints
 
-### POST `/query`
+### POST `/llm/query`
 
 Handles user messages and processes vehicle data queries.
+
+**Note:** The endpoint `/query` is also available for backward compatibility and forwards to `/llm/query`.
 
 **Request:**
 
@@ -134,6 +151,13 @@ Handles user messages and processes vehicle data queries.
   "data": {
     "script": "import pandas as pd\n# ... generated script",
     "image_base64": "iVBORw0...", // optional when plotting
+    "table_data": { // optional for "show all" queries
+      "columns": ["trip_id", "acu_cell1_temp", "acu_cell1_voltage"],
+      "rows": [
+        { "trip_id": "1", "acu_cell1_temp": 25.5, "acu_cell1_voltage": 3.2 },
+        { "trip_id": "2", "acu_cell1_temp": 26.1, "acu_cell1_voltage": 3.3 }
+      ]
+    },
     "signal_scoring": {
       "selected": [["acu_cell16_voltage", 3.5]],
       "top": [{ "signal": "acu_cell16_voltage", "final": 3.5, "ratio": 0.82 }]
@@ -146,6 +170,10 @@ Handles user messages and processes vehicle data queries.
 ### POST `/log`
 
 Receives and stores frontend error reports.
+
+### GET/POST `/llm/clear-cache`
+
+Clears both script cache and signal cache. Useful for testing or when signal data has been updated in the database.
 
 ### GET `/health`
 
@@ -169,7 +197,22 @@ Health check endpoint for monitoring.
 │   │   └── App.tsx
 │   └── package.json
 ├── backend/
-│   ├── main.py
+│   ├── src/
+│   │   ├── main.py              # Main FastAPI application
+│   │   ├── api/                 # API endpoints (for future expansion)
+│   │   │   └── __init__.py
+│   │   ├── llm/                 # LLM integration (separate from api)
+│   │   │   ├── __init__.py
+│   │   │   ├── router.py        # /llm/query endpoint
+│   │   │   ├── agent.py         # Gemini API wrapper
+│   │   │   └── tools.py         # Tool schemas + dispatch logic
+│   │   └── tools/               # Query execution logic
+│   │       ├── __init__.py
+│   │       ├── run_queries.py   # Domain-specific querying logic
+│   │       └── utils.py         # Signal matching, scoring, DB cache
+│   ├── tests/
+│   │   ├── test_llm.py          # LLM API tests
+│   │   └── test_tools.py        # Tools functionality tests
 │   ├── requirements.txt
 │   ├── requirements-minimal.txt
 │   └── env.example
@@ -178,9 +221,18 @@ Health check endpoint for monitoring.
 
 ### Key Components
 
+**Frontend:**
 - **ChatWindow**: Main chat interface container
 - **MessageBubble**: Displays text or base64 graphs from backend
 - **InputBox**: Message input with send functionality
+
+**Backend:**
+- **src/main.py**: FastAPI application entry point, mounts routers and handles general endpoints
+- **src/llm/router.py**: LLM query endpoint handler (`/llm/query`)
+- **src/llm/agent.py**: Gemini API integration and wrapper
+- **src/llm/tools.py**: Tool schemas and dispatch logic for LLM agent
+- **src/tools/run_queries.py**: Query execution logic with Pandas script generation and execution
+- **src/tools/utils.py**: Signal matching, scoring, and database caching utilities
 
 ## Configuration
 
@@ -197,8 +249,8 @@ GEMINI_API_KEY=your_gemini_api_key_here
 # GEMINI_RETRY_BACKOFF=1.0
 # DEBUG_ANALYSIS=false
 # GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1
-# VEHICLE_DATA_TIMEOUT=30
-# SCRIPT_TIMEOUT=20
+# VEHICLE_DATA_TIMEOUT=120  # Increased for complex multi-trip queries
+# SCRIPT_TIMEOUT=120  # Increased for complex data processing
 ## MySQL connection for signals catalog (required for fuzzy mapping)
 DATABASE_HOST=verstappen-ec2.gauchoracing.com
 DATABASE_PORT=3306
@@ -221,12 +273,15 @@ DATABASE_NAME=mapache
 
 ### Advanced Queries Supported
 
-- Aggregations: average/mean, min, max, median, percentiles
-- Ranking: top N / bottom N rows
-- Comparisons: compute and compare metrics across trips/signals
-- Graphs: plot temp vs voltage, axes annotated with units (V, C)
+- **Aggregations**: average/mean, min, max, median, percentiles
+- **Ranking**: top N / bottom N rows
+- **Comparisons**: compute and compare metrics across trips/signals
+- **Graphs**: plot temp vs voltage, axes annotated with units (V, C)
+- **Multi-Metric Queries**: Filter by multiple conditions (e.g., "battery temperature > 25°C AND cell voltages > 3V")
+- **Show All Queries**: Display results in formatted, scrollable tables
+- **Multi-Trip Queries**: Query across all trips ("all test runs") or specific ranges ("trips 3-5")
 
-Results include a single-line answer; the executed script, signal scoring and optional debug/plot are returned in `data`.
+Results include a single-line answer; the executed script, signal scoring, optional debug/plot, and structured table data are returned in `data`.
 
 ### Signal Selection & Fuzzy Mapping
 
@@ -235,8 +290,15 @@ Results include a single-line answer; the executed script, signal scoring and op
   - If cache has trip_id 3 and user requests trip_id 3 → uses cache (no SQL query)
   - If cache has trip_id 3 and user requests trip_id 4 → runs SQL query and caches trip_id 4
   - If cache has trip_id 3 and user requests trip_id 3 again → uses cache (no SQL query)
+- **Metadata Filtering**: Non-signal fields like `run_id`, `trip_id`, `produced_at`, `vehicle_id`, and `token` are automatically filtered out from signal selection and API requests.
 - Queries are mapped to signals using a 0–200 score (0 best). The lowest-scored signal(s) are chosen.
-- Exact inference: patterns like "cell 16 temperature" map directly to `acu_cell16_temp`; "cell 16 voltage" maps to `acu_cell16_voltage`.
+- **Intelligent Signal Mapping**:
+  - **Battery/Cell Temperature**: "battery temperature" or "cell temperature" (without number) → selects ALL `acu_cell*_temp` signals (up to 50)
+  - **Battery/Cell Voltage**: "cell voltages" or "battery voltage" (without number) → selects ALL `acu_cell*_voltage` signals (up to 50)
+  - **Specific Cells**: "battery 22 temperature" → `acu_cell22_temp`, "cell 1 voltage" → `acu_cell1_voltage`
+  - **Motor Current**: "motor current draw" → `tcm_power_draw`
+  - Exact inference: patterns like "cell 16 temperature" map directly to `acu_cell16_temp`; "cell 16 voltage" maps to `acu_cell16_voltage`.
+- **Multi-Metric Queries**: When multiple metrics are requested (e.g., "temperature AND voltage"), the system selects signals for each metric independently and combines them.
 - For correlation/"vs" queries, the top two signals are selected.
 - If best score > 100, the query is considered unrelated and a polite fallback is returned.
 - Response includes `data.signal_scoring` for transparency.
@@ -246,4 +308,8 @@ Results include a single-line answer; the executed script, signal scoring and op
 - If a query mentions `cell` and `temperature` or `voltage` but lacks a cell number, backend responds with:
   "Which cell number for temperature/voltage? e.g., 16 or 110" and data `{ intent: "clarify_cell_metric", metric: "temperature|voltage" }`.
 - The frontend merges the follow-up (e.g., "cell 16") into the original request to preserve the user's metric intent (e.g., only "max").
-- If a query omits the trip/run, backend asks: "Which trip (run) number? e.g., 3" and data `{ intent: "clarify_trip" }`. Frontend merges the run number into the last query.
+- If a query omits the trip/run, backend asks: "Which trip (run) number? e.g., 3, or 'all' for all trips, or 'trips 3-5' for a range" and data `{ intent: "clarify_trip" }`. Frontend merges the run number into the last query.
+- **Trip ID Support**: The system accepts:
+  - Single trip: "trip 3" or "run 3"
+  - All trips: "all test runs" or "all trips"
+  - Range: "trips 3-5" or "runs 3-5"

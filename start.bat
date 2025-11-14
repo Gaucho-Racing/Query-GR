@@ -35,7 +35,7 @@ if not exist ".env" (
 
 REM Start backend in new window
 echo 🚀 Starting backend server on http://localhost:8000
-start "Backend Server" cmd /k "uvicorn main:app --reload --host 0.0.0.0 --port 8000"
+start "Backend Server" cmd /k "uvicorn src.main:app --reload --host 0.0.0.0 --port 8000"
 
 cd ..
 
