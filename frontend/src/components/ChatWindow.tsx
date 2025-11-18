@@ -3,6 +3,7 @@ import type { Message, ChatWindowProps } from "../types/chatbot";
 import { sendMessage, logError } from "../services/api";
 import MessageBubble from "./MessageBubble";
 import InputBox from "./InputBox";
+import gauchoracingLogo from "../assets/gauchoracing.png";
 // Theme toggle removed; default dark mode enforced at app root
 
 const ChatWindow = ({ className = "" }: ChatWindowProps) => {
@@ -124,9 +125,16 @@ const ChatWindow = ({ className = "" }: ChatWindowProps) => {
     >
       {/* Header */}
       <div className="rounded-2xl flex items-center justify-between p-4 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-        <h1 className="text-5xl font-semibold text-gray-900 dark:text-white">
-          Vehicle Data Chatbot
-        </h1>
+        <div className="flex items-center space-x-4">
+          <img 
+            src={gauchoracingLogo} 
+            alt="Gaucho Racing Logo" 
+            className="h-12 w-auto"
+          />
+          <h1 className="text-5xl font-semibold text-gray-900 dark:text-white">
+            Vehicle Data Chatbot
+          </h1>
+        </div>
       </div>
 
       {/* Messages */}
