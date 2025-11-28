@@ -7,3 +7,5 @@ pydantic>=2.6.0
 python-dotenv>=1.0.0
 matplotlib>=3.8.0
 mysql-connector-python==8.1.0
+openai>=0.2.0
+google-genai>=0.2.0

@@ -8,3 +8,5 @@ pydantic
 python-dotenv
 matplotlib
 mysql-connector-python
+openai
+google-genai

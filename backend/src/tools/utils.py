@@ -3,6 +3,7 @@ import re
 import logging
 import mysql.connector
 import os
+import time
 from typing import List, Tuple, Optional, Dict, Any, Callable
 from dotenv import load_dotenv
 
@@ -19,6 +20,16 @@ DB_NAME = os.getenv("DATABASE_NAME", "")
 
 DB_SIGNALS_CACHE: Dict[str, List[str]] = {}  # Keyed by trip_id
 
+DB_SIGNAL_EMBEDDINGS_CACHE: Dict[str, Dict[str, List[float]]] = {}
+
+# from openai import OpenAI
+
+# client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+
+from google import genai
+from google.genai import types
+
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY",""))
 
 def extract_trip_id(message: str) -> Optional[str]:
     """Extract trip ID from user message using various patterns.
@@ -162,6 +173,74 @@ def expand_trip_ids(trip_spec: str) -> List[str]:
         # Single trip ID
         return [trip_spec]
 
+def compute_signal_embeddings(signals: List[str], trip_id: str) -> None:
+    """
+    Generate vector embeddings for all signals and store them in 
+    DB_SIGNAL_EMBEDDINGS_CACHE[trip_id].
+    """
+
+    if not signals:
+        return
+
+    # if not os.getenv("OPENAI_API_KEY"):
+    #     logger.warning("Cannot compute embeddings: OPENAI_API_KEY not set.")
+    #     DB_SIGNAL_EMBEDDINGS_CACHE[trip_id] = {}
+    #     return
+    
+    if not os.getenv("GEMINI_API_KEY"):
+        logger.warning("Cannot compute embeddings: GEMINI_API_KEY not set.")
+        DB_SIGNAL_EMBEDDINGS_CACHE[trip_id] = {}
+        return
+
+    try:
+        logger.info(f"[EMBEDDINGS] Generating embeddings for {len(signals)} signals for trip {trip_id}")
+
+        # totalResp = []
+        # stopIndex = 1
+        # batchSize = stopIndex
+        
+        # while stopIndex < len(signals):
+        #     batch = signals[stopIndex-batchSize:stopIndex:1]
+        #     resp = client.embeddings.create(
+        #         model="text-embedding-3-small",   # recommended cheap + fast model
+        #         input=batch
+        #     )
+        #     totalResp.extend(resp)
+        #     stopIndex += batchSize
+
+        # vectors = [record.embedding for record in totalResp.data]
+
+        totalResp = []
+        totalVectors = []
+        # stopIndex = 50
+        # batchSize = stopIndex
+        batchSize = 50
+        attempt = 1
+
+        while attempt*batchSize < len(signals):
+            batch = signals[attempt*(batchSize-1):attempt*batchSize:1]
+            resp = client.models.embed_content(
+            model="gemini-embedding-001",
+            contents=batch,
+            config=types.EmbedContentConfig(task_type="SEMANTIC_SIMILARITY"))
+            logger.info(resp)
+            vectors = [record.values for record in resp.embeddings]
+            totalVectors.extend(vectors)
+            time.sleep(0.5*(2 ** attempt))
+            attempt += 1
+
+        # vectors = [record.values for record in totalResp.embeddings]
+
+        DB_SIGNAL_EMBEDDINGS_CACHE[trip_id] = {}
+
+        for sig, vec in zip(signals, totalVectors):
+            DB_SIGNAL_EMBEDDINGS_CACHE[trip_id][sig] = vec
+
+        logger.info(f"[EMBEDDINGS] Cached {len(signals)} signal embeddings for trip {trip_id}")
+
+    except Exception as e:
+        logger.error(f"[EMBEDDINGS] Failed to generate embeddings for trip_id={trip_id}: {e}")
+        DB_SIGNAL_EMBEDDINGS_CACHE[trip_id] = {}
 
 def refresh_db_signals_cache(trip_id: str) -> int:
     """Fetch distinct signal names into DB_SIGNALS_CACHE for a specific trip_id. Returns count or 0 on failure."""
@@ -189,6 +268,8 @@ def refresh_db_signals_cache(trip_id: str) -> int:
             names = [r[0] for r in rows if r and isinstance(r[0], str) and r[0].strip()]
             signals = sorted(set(names))
             DB_SIGNALS_CACHE[trip_id] = signals
+            # Generate embeddings for these signals
+            compute_signal_embeddings(signals, trip_id)
             logger.info(f"[SQL QUERY] Successfully loaded {len(signals)} signals from DB {DB_NAME} for trip_id {trip_id} and cached")
             return len(signals)
         finally:
@@ -200,6 +281,7 @@ def refresh_db_signals_cache(trip_id: str) -> int:
     except Exception as e:
         logger.warning(f"[SQL QUERY] Failed to load signals from DB for trip_id {trip_id}: {e}")
         return 0
+
 
 
 def get_known_signals(trip_id: str) -> List[str]:
