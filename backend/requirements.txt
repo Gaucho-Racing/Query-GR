@@ -9,3 +9,5 @@ matplotlib>=3.8.0
 mysql-connector-python==8.1.0
 openai>=0.2.0
 google-genai>=0.2.0
+pytest>=7.4.0
+pytest-asyncio>=0.21.0

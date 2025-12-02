@@ -240,6 +240,7 @@ Use this URL to confirm your backend is online: http://127.0.0.1:8000/health
 │   │   ├── test_llm.py          # LLM API tests
 │   │   └── test_tools.py        # Tools functionality tests
 │   ├── requirements.txt
+│   ├── test.sh                  # Custom test runner with progress tracking
 │   └── env.example
 └── README.md
 ```
@@ -258,6 +259,29 @@ Use this URL to confirm your backend is online: http://127.0.0.1:8000/health
 - **src/llm/tools.py**: Tool schemas and dispatch logic for LLM agent
 - **src/tools/run_queries.py**: Query execution logic with Pandas script generation and execution
 - **src/tools/utils.py**: Signal matching, scoring, and database caching utilities
+
+### Running Tests
+
+To run the backend tests with custom progress tracking and failure reporting:
+
+```bash
+cd backend
+chmod +x test.sh  # Make script executable (only needed once)
+./test.sh
+```
+
+Or run pytest directly:
+
+```bash
+cd backend
+python3 -m pytest tests/ -v
+```
+
+The custom test runner (`test.sh`) will display:
+- **Test results**: Clear pass/fail indicators for each test (pytest shows progress percentages naturally)
+- **Status codes**: HTTP status codes with meanings (200 = ✅ Healthy, etc.) - shown in test output
+- **Failure details**: Shows reasons for failed tests
+- **Custom summary**: Formatted summary with total tests, passed, failed, and error counts
 
 ## Configuration
 

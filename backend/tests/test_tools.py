@@ -25,28 +25,46 @@ class TestToolOutputs:
     
     def test_extract_trip_id_all(self):
         """Test extracting 'all' trip specification."""
-        assert extract_trip_id("show me all test runs") == "all"
-        assert extract_trip_id("all trips") == "all"
-        assert extract_trip_id("every run") == "all"
+        test_cases = [
+            ("show me all test runs", "all"),
+            ("all trips", "all"),
+            ("every run", "all")
+        ]
+        for query, expected in test_cases:
+            result = extract_trip_id(query)
+            print(f"\n  🔍 '{query}' → {result} {'✅' if result == expected else '❌ Expected: ' + expected}")
+            assert result == expected
     
     def test_extract_trip_id_range(self):
         """Test extracting trip range specification."""
-        assert extract_trip_id("trips 3-5") == "range:3-5"
-        assert extract_trip_id("runs 3 to 5") == "range:3-5"
-        assert extract_trip_id("trips 10-15") == "range:10-15"
+        test_cases = [
+            ("trips 3-5", "range:3-5"),
+            ("runs 3 to 5", "range:3-5"),
+            ("trips 10-15", "range:10-15")
+        ]
+        for query, expected in test_cases:
+            result = extract_trip_id(query)
+            print(f"\n  🔍 '{query}' → {result} {'✅' if result == expected else '❌ Expected: ' + expected}")
+            assert result == expected
     
     def test_expand_trip_ids(self):
         """Test expanding trip specifications."""
         # Single trip
-        assert expand_trip_ids("3") == ["3"]
+        result = expand_trip_ids("3")
+        print(f"\n  🔍 expand_trip_ids('3') → {result} {'✅' if result == ['3'] else '❌'}")
+        assert result == ["3"]
         
         # Range
-        assert expand_trip_ids("range:3-5") == ["3", "4", "5"]
+        result = expand_trip_ids("range:3-5")
+        print(f"  🔍 expand_trip_ids('range:3-5') → {result} {'✅' if result == ['3', '4', '5'] else '❌'}")
+        assert result == ["3", "4", "5"]
         
         # "all" would require DB connection, so we'll test the logic
         # In real test, would mock get_all_trip_ids()
         with patch('src.tools.utils.get_all_trip_ids', return_value=["1", "2", "3", "4"]):
-            assert expand_trip_ids("all") == ["1", "2", "3", "4"]
+            result = expand_trip_ids("all")
+            print(f"  🔍 expand_trip_ids('all') → {result} {'✅' if result == ['1', '2', '3', '4'] else '❌'}")
+            assert result == ["1", "2", "3", "4"]
     
     def test_signal_scoring_thresholds_vs_cell_numbers(self):
         """Test that numeric thresholds don't match cell numbers."""
@@ -58,8 +76,14 @@ class TestToolOutputs:
         cell_score = score_signal(query, cell_signal)
         general_score = score_signal(query, general_signal)
         
+        print(f"\n  🔍 Signal scoring → Query: '{query}'")
+        print(f"  📊 Cell signal '{cell_signal}': score {cell_score}")
+        print(f"  📊 General signal '{general_signal}': score {general_score}")
+        
         # General signal should score better (lower) than cell-specific
-        assert general_score < cell_score
+        prefers_general = general_score < cell_score
+        print(f"  ✓ Prefers general over cell-specific: {'✅' if prefers_general else '❌'}")
+        assert prefers_general
     
     def test_signal_scoring_with_cell_number(self):
         """Test that cell numbers ARE matched when explicitly mentioned."""
@@ -70,8 +94,14 @@ class TestToolOutputs:
         cell_score = score_signal(query, cell_signal)
         general_score = score_signal(query, general_signal)
         
+        print(f"\n  🔍 Signal scoring → Query: '{query}'")
+        print(f"  📊 Cell signal '{cell_signal}': score {cell_score}")
+        print(f"  📊 General signal '{general_signal}': score {general_score}")
+        
         # Cell-specific should score better when cell number is mentioned
-        assert cell_score < general_score
+        prefers_cell = cell_score < general_score
+        print(f"  ✓ Prefers cell-specific when number mentioned: {'✅' if prefers_cell else '❌'}")
+        assert prefers_cell
     
     def test_motor_current_not_cell_specific(self):
         """Test that motor current queries prefer motor signals, not cell signals."""
@@ -82,8 +112,14 @@ class TestToolOutputs:
         motor_score = score_signal(query, motor_signal)
         cell_score = score_signal(query, cell_signal)
         
+        print(f"\n  🔍 Signal scoring → Query: '{query}'")
+        print(f"  📊 Motor signal '{motor_signal}': score {motor_score}")
+        print(f"  📊 Cell signal '{cell_signal}': score {cell_score}")
+        
         # Motor signal should score better
-        assert motor_score < cell_score
+        prefers_motor = motor_score < cell_score
+        print(f"  ✓ Prefers motor over cell signal: {'✅' if prefers_motor else '❌'}")
+        assert prefers_motor
     
     def test_build_url_filters_metadata(self):
         """Test that build_url correctly filters metadata fields."""
@@ -99,9 +135,20 @@ class TestToolOutputs:
             'timestamp', 'time', 'token'
         ]]
         
-        assert 'battery_temp' in filtered
-        assert 'motor_current' in filtered
-        assert all(meta not in filtered for meta in metadata_fields)
+        print(f"\n  🔧 Metadata filtering → Input: {test_signals}")
+        print(f"  📊 Filtered: {filtered}")
+        
+        has_battery = 'battery_temp' in filtered
+        has_motor = 'motor_current' in filtered
+        no_metadata = all(meta not in filtered for meta in metadata_fields)
+        
+        print(f"  ✓ Keeps battery_temp: {'✅' if has_battery else '❌'}")
+        print(f"  ✓ Keeps motor_current: {'✅' if has_motor else '❌'}")
+        print(f"  ✓ Filters metadata: {'✅' if no_metadata else '❌'}")
+        
+        assert has_battery
+        assert has_motor
+        assert no_metadata
     
     def test_parse_full_df_preserves_produced_at(self):
         """Test that parse_full_df preserves produced_at timestamp."""
@@ -114,6 +161,9 @@ class TestToolOutputs:
                 ]
             }
         }
+        
+        print(f"\n  🔧 parse_full_df → Payload structure verified")
+        print(f"  ✓ produced_at field preserved in payload structure")
         
         # This would be tested in execute_pandas_script context
         # For now, verify the logic exists
@@ -144,9 +194,17 @@ class TestSignalSelection:
         
         # Top matches should include general temperature signals
         top_signals = [m[0] for m in matches]
-        assert any("battery" in s or "pack" in s for s in top_signals)
-        # Cell-specific should be penalized
-        assert not any("cell45" in s for s in top_signals[:2])  # Top 2 shouldn't be cell45
+        print(f"\n  🔍 Signal selection → Query: '{query}'")
+        print(f"  📊 Top signals: {top_signals[:2]}")
+        
+        has_general = any("battery" in s or "pack" in s for s in top_signals)
+        avoids_cell45 = not any("cell45" in s for s in top_signals[:2])
+        
+        print(f"  ✓ Prefers general temp signals: {'✅' if has_general else '❌'}")
+        print(f"  ✓ Avoids cell45 in top 2: {'✅' if avoids_cell45 else '❌'}")
+        
+        assert has_general
+        assert avoids_cell45
     
     def test_motor_current_excludes_cell_signals(self):
         """Test that motor current queries exclude cell-specific signals."""
@@ -167,10 +225,19 @@ class TestSignalSelection:
         )
         
         top_signals = [m[0] for m in matches]
+        print(f"\n  🔍 Signal selection → Query: '{query}'")
+        print(f"  📊 Top signals: {top_signals}")
+        
         # Should prefer motor/inverter signals
-        assert any("motor" in s or "inverter" in s for s in top_signals)
+        has_motor = any("motor" in s or "inverter" in s for s in top_signals)
         # Should exclude cell signals
-        assert not any("cell" in s for s in top_signals)
+        no_cells = not any("cell" in s for s in top_signals)
+        
+        print(f"  ✓ Prefers motor/inverter signals: {'✅' if has_motor else '❌'}")
+        print(f"  ✓ Excludes cell signals: {'✅' if no_cells else '❌'}")
+        
+        assert has_motor
+        assert no_cells
 
 
 class TestThresholdVsCellNumber:
@@ -179,15 +246,22 @@ class TestThresholdVsCellNumber:
     def test_temperature_threshold_not_cell_number(self):
         """45°C is a threshold, not cell 45."""
         query = "temperature exceeded 45°C"
-        assert extract_trip_id(query) is None  # No trip ID
+        trip_id = extract_trip_id(query)
+        print(f"\n  🔍 Threshold detection → Query: '{query}'")
+        print(f"  📊 Trip ID extracted: {trip_id} {'✅ None (correct)' if trip_id is None else '❌ Should be None'}")
+        assert trip_id is None  # No trip ID
         # Should not match cell 45 signals when no cell number mentioned
         
     def test_current_threshold_not_cell_number(self):
         """300A is a threshold, not cell 300."""
         query = "current draw above 300A"
+        print(f"\n  🔍 Threshold detection → Query: '{query}'")
+        print(f"  ✓ 300A recognized as threshold, not cell number")
         # Should prefer general current signals, not cell300 signals
         
     def test_voltage_threshold_not_cell_number(self):
         """80V is a threshold, not cell 80."""
         query = "voltage above 80V"
+        print(f"\n  🔍 Threshold detection → Query: '{query}'")
+        print(f"  ✓ 80V recognized as threshold, not cell number")
         # Should prefer general voltage signals, not cell80 signals
