@@ -42,7 +42,6 @@ This chatbot provides an intelligent interface for querying vehicle telemetry da
 - Python 3.8+ (tested with Python 3.13)
 - Gemini API key
 
-**Note:** For Python 3.13 users, the project uses `requirements-minimal.txt` to ensure compatibility.
 
 ### Frontend Setup
 
@@ -60,7 +59,7 @@ The frontend will be available at `http://localhost:5173`
 
 ```bash
 cd backend
-pip install -r requirements-minimal.txt
+pip install -r requirements.txt
 ```
 
 2. **Configure environment:**
@@ -73,16 +72,7 @@ cp env.example .env
 3. **Run the server:**
 
 ```bash
-uvicorn src.main:app --reload
-```
-
-Or use the provided startup scripts from the project root:
-```bash
-# Linux/Mac
-./start.sh
-
-# Windows
-start.bat
+python3 -m uvicorn src.main:app --reload
 ```
 
 The backend API will be available at `http://localhost:8000`
@@ -169,7 +159,32 @@ Handles user messages and processes vehicle data queries.
 
 ### POST `/log`
 
-Receives and stores frontend error reports.
+This endpoint allows the frontend (browser) to send error details back to the backend for debugging.
+Any time something goes wrong in the user’s browser—such as:
+
+  API failures
+  JavaScript errors
+  Unexpected UI crashes
+  Bad network requests
+  Missing data
+
+Accepts JSON (Example):
+{
+  "level": "error",
+  "message": "test log from terminal",
+  "error": "optional error field",
+  "timestamp": "2025-11-22T17:00:00Z",
+  "userAgent": "curl test",
+  "url": "/manual-test"
+}
+
+Responds with:
+{
+  "status": "success",
+  "message": "Error logged successfully"
+}
+
+Use this URL for the logging endpoint for the frontend: http://127.0.0.1:8000/log
 
 ### GET/POST `/llm/clear-cache`
 
@@ -177,7 +192,16 @@ Clears both script cache and signal cache. Useful for testing or when signal dat
 
 ### GET `/health`
 
-Health check endpoint for monitoring.
+Health check endpoint for monitoring backend.
+
+Returns:
+
+{
+  "status": "healthy",
+  "message": "Vehicle Data Chatbot API is running"
+}
+
+Use this URL to confirm your backend is online: http://127.0.0.1:8000/health
 
 ## Development
 
@@ -200,7 +224,9 @@ Health check endpoint for monitoring.
 │   ├── src/
 │   │   ├── main.py              # Main FastAPI application
 │   │   ├── api/                 # API endpoints (for future expansion)
-│   │   │   └── __init__.py
+│   │   │   ├── __init__.py
+│   │   │   ├── health.py        # backend health end checkpoint
+│   │   │   ├── log.py           # frontend logging endpoint
 │   │   ├── llm/                 # LLM integration (separate from api)
 │   │   │   ├── __init__.py
 │   │   │   ├── router.py        # /llm/query endpoint
@@ -214,7 +240,6 @@ Health check endpoint for monitoring.
 │   │   ├── test_llm.py          # LLM API tests
 │   │   └── test_tools.py        # Tools functionality tests
 │   ├── requirements.txt
-│   ├── requirements-minimal.txt
 │   └── env.example
 └── README.md
 ```
