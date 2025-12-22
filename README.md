@@ -42,7 +42,6 @@ This chatbot provides an intelligent interface for querying vehicle telemetry da
 - Python 3.8+ (tested with Python 3.13)
 - Gemini API key
 
-
 ### Frontend Setup
 
 ```bash
@@ -141,7 +140,8 @@ Handles user messages and processes vehicle data queries.
   "data": {
     "script": "import pandas as pd\n# ... generated script",
     "image_base64": "iVBORw0...", // optional when plotting
-    "table_data": { // optional for "show all" queries
+    "table_data": {
+      // optional for "show all" queries
       "columns": ["trip_id", "acu_cell1_temp", "acu_cell1_voltage"],
       "rows": [
         { "trip_id": "1", "acu_cell1_temp": 25.5, "acu_cell1_voltage": 3.2 },
@@ -162,26 +162,26 @@ Handles user messages and processes vehicle data queries.
 This endpoint allows the frontend (browser) to send error details back to the backend for debugging.
 Any time something goes wrong in the user’s browser—such as:
 
-  API failures
-  JavaScript errors
-  Unexpected UI crashes
-  Bad network requests
-  Missing data
+API failures
+JavaScript errors
+Unexpected UI crashes
+Bad network requests
+Missing data
 
 Accepts JSON (Example):
 {
-  "level": "error",
-  "message": "test log from terminal",
-  "error": "optional error field",
-  "timestamp": "2025-11-22T17:00:00Z",
-  "userAgent": "curl test",
-  "url": "/manual-test"
+"level": "error",
+"message": "test log from terminal",
+"error": "optional error field",
+"timestamp": "2025-11-22T17:00:00Z",
+"userAgent": "curl test",
+"url": "/manual-test"
 }
 
 Responds with:
 {
-  "status": "success",
-  "message": "Error logged successfully"
+"status": "success",
+"message": "Error logged successfully"
 }
 
 Use this URL for the logging endpoint for the frontend: http://127.0.0.1:8000/log
@@ -197,8 +197,8 @@ Health check endpoint for monitoring backend.
 Returns:
 
 {
-  "status": "healthy",
-  "message": "Vehicle Data Chatbot API is running"
+"status": "healthy",
+"message": "Vehicle Data Chatbot API is running"
 }
 
 Use this URL to confirm your backend is online: http://127.0.0.1:8000/health
@@ -235,7 +235,7 @@ Use this URL to confirm your backend is online: http://127.0.0.1:8000/health
 │   │   └── tools/               # Query execution logic
 │   │       ├── __init__.py
 │   │       ├── run_queries.py   # Domain-specific querying logic
-│   │       └── utils.py         # Signal matching, scoring, DB cache
+│   │       └── utils.py         # Signal matching, scoring, DB cache, Signals Embeddings Cache
 │   ├── tests/
 │   │   ├── test_llm.py          # LLM API tests
 │   │   └── test_tools.py        # Tools functionality tests
@@ -248,17 +248,19 @@ Use this URL to confirm your backend is online: http://127.0.0.1:8000/health
 ### Key Components
 
 **Frontend:**
+
 - **ChatWindow**: Main chat interface container
 - **MessageBubble**: Displays text or base64 graphs from backend
 - **InputBox**: Message input with send functionality
 
 **Backend:**
+
 - **src/main.py**: FastAPI application entry point, mounts routers and handles general endpoints
 - **src/llm/router.py**: LLM query endpoint handler (`/llm/query`)
 - **src/llm/agent.py**: Gemini API integration and wrapper
 - **src/llm/tools.py**: Tool schemas and dispatch logic for LLM agent
 - **src/tools/run_queries.py**: Query execution logic with Pandas script generation and execution
-- **src/tools/utils.py**: Signal matching, scoring, and database caching utilities
+- **src/tools/utils.py**: Signal matching, scoring, database caching, and signals embeddings caching utilities
 
 ### Running Tests
 
@@ -278,6 +280,7 @@ python3 -m pytest tests/ -v
 ```
 
 The custom test runner (`test.sh`) will display:
+
 - **Test results**: Clear pass/fail indicators for each test (pytest shows progress percentages naturally)
 - **Status codes**: HTTP status codes with meanings (200 = ✅ Healthy, etc.) - shown in test output
 - **Failure details**: Shows reasons for failed tests
@@ -351,6 +354,11 @@ Results include a single-line answer; the executed script, signal scoring, optio
 - For correlation/"vs" queries, the top two signals are selected.
 - If best score > 100, the query is considered unrelated and a polite fallback is returned.
 - Response includes `data.signal_scoring` for transparency.
+
+### Signals Embedded and Cached
+
+- When signals are fetched from DB (above), they are first converted into vector embeddings in batches of 50 via Gemini API
+- Then all of the batches are combined into one list of vector embeddings which is cached in-memory
 
 ### Clarification Flow
 
